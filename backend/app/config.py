@@ -33,6 +33,8 @@ class Settings:
     host: str = field(default_factory=lambda: _env("HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: int(_env("PORT", "8443")))
     allowed_group: str = field(default_factory=lambda: _env("ALLOWED_GROUP", "wheel"))
+    # Members of this group may log in read-only.
+    viewer_group: str = field(default_factory=lambda: _env("VIEWER_GROUP", "firewall-viewers"))
     pam_service: str = field(default_factory=lambda: _env("PAM_SERVICE", "richrule"))
     secret_file: Path = field(
         default_factory=lambda: Path(_env("SECRET_FILE", "/var/lib/richrule/secret.key"))
@@ -46,8 +48,17 @@ class Settings:
     safe_apply_seconds: int = field(
         default_factory=lambda: int(_env("SAFE_APPLY_SECONDS", "60"))
     )
+    state_dir: Path = field(default_factory=lambda: Path(_env("STATE_DIR", "/var/lib/richrule")))
+    firewalld_dir: Path = field(default_factory=lambda: Path(_env("FIREWALLD_DIR", "/etc/firewalld")))
+    # Seconds between checks for changes made outside richrule (0 disables the watcher).
+    watch_interval: int = field(default_factory=lambda: int(_env("WATCH_INTERVAL", "30")))
+    # Optional built-in HTTPS.
+    tls_cert: str = field(default_factory=lambda: _env("TLS_CERT", ""))
+    tls_key: str = field(default_factory=lambda: _env("TLS_KEY", ""))
     # Set to 0 when serving plain HTTP on localhost without a TLS proxy.
-    secure_cookies: bool = field(default_factory=lambda: _env("SECURE_COOKIES", "0") == "1")
+    secure_cookies: bool = field(
+        default_factory=lambda: _env("SECURE_COOKIES", "1" if _env("TLS_CERT", "") else "0") == "1"
+    )
     static_dir: Path = field(
         default_factory=lambda: Path(
             _env("STATIC_DIR", str(Path(__file__).resolve().parents[2] / "frontend" / "dist"))

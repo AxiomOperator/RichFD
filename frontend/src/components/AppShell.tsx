@@ -1,7 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query'
 import {
+  ArrowLeftRightIcon,
   ChevronDownIcon,
   CircleUserIcon,
+  FileClockIcon,
+  FileCode2Icon,
+  FolderSyncIcon,
   HistoryIcon,
   LayoutDashboardIcon,
   ListIcon,
@@ -9,16 +13,21 @@ import {
   MonitorIcon,
   MoonIcon,
   NetworkIcon,
+  RadarIcon,
   RefreshCwIcon,
   SaveIcon,
+  ScrollTextIcon,
+  ServerIcon,
+  SettingsIcon,
   ShieldIcon,
   SunIcon,
+  WandSparklesIcon,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import type { ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router'
 import { api } from '@/api/client'
-import { useFwMutation, useStatus, useZones } from '@/api/hooks'
+import { useFwMutation, useHosts, useStatus, useZones } from '@/api/hooks'
 import type { Me, Target } from '@/api/types'
 import { ConfirmButton } from '@/components/ConfirmButton'
 import { PendingChangesBar } from '@/components/PendingChangesBar'
@@ -56,6 +65,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { TARGET_LABELS, useApplyMode } from '@/lib/apply-mode'
+import { useHostSwitcher } from '@/lib/host'
 
 function AppSidebar({ me }: { me: Me }) {
   const zones = useZones()
@@ -63,11 +73,35 @@ function AppSidebar({ me }: { me: Me }) {
   const { pathname } = useLocation()
   const qc = useQueryClient()
 
-  const nav = [
-    { to: '/', label: 'Dashboard', icon: LayoutDashboardIcon },
-    { to: '/services', label: 'Services', icon: ListIcon },
-    { to: '/ipsets', label: 'IP Sets', icon: NetworkIcon },
-    { to: '/audit', label: 'Audit log', icon: HistoryIcon },
+  const groups = [
+    {
+      label: null,
+      items: [
+        { to: '/', label: 'Dashboard', icon: LayoutDashboardIcon },
+        { to: '/policies', label: 'Policies', icon: ArrowLeftRightIcon },
+        { to: '/services', label: 'Services', icon: ListIcon },
+        { to: '/ipsets', label: 'IP Sets', icon: NetworkIcon },
+        { to: '/templates', label: 'Templates', icon: WandSparklesIcon },
+      ],
+    },
+    {
+      label: 'Diagnose',
+      items: [
+        { to: '/tester', label: 'Traffic tester', icon: RadarIcon },
+        { to: '/denied', label: 'Packet log', icon: ScrollTextIcon },
+      ],
+    },
+    {
+      label: 'Manage',
+      items: [
+        { to: '/history', label: 'Config history', icon: FileClockIcon },
+        { to: '/import-export', label: 'Import / export', icon: FolderSyncIcon },
+        { to: '/direct', label: 'Direct rules', icon: FileCode2Icon },
+        { to: '/audit', label: 'Audit log', icon: HistoryIcon },
+        { to: '/hosts', label: 'Hosts', icon: ServerIcon },
+        { to: '/settings', label: 'Settings', icon: SettingsIcon },
+      ],
+    },
   ]
 
   async function logout() {
@@ -82,6 +116,7 @@ function AppSidebar({ me }: { me: Me }) {
   return (
     <Sidebar>
       <SidebarHeader>
+        <HostSwitcher me={me} />
         <Link to="/" className="flex items-center gap-2 px-2 py-1.5">
           <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <ShieldIcon className="size-4" />
@@ -95,22 +130,24 @@ function AppSidebar({ me }: { me: Me }) {
         </Link>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {nav.map((n) => (
-                <SidebarMenuItem key={n.to}>
-                  <SidebarMenuButton asChild isActive={pathname === n.to}>
-                    <NavLink to={n.to}>
-                      <n.icon />
-                      <span>{n.label}</span>
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {groups.slice(0, 1).map((g, gi) => (
+          <SidebarGroup key={gi}>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {g.items.map((n) => (
+                  <SidebarMenuItem key={n.to}>
+                    <SidebarMenuButton asChild isActive={pathname === n.to || (n.to !== '/' && pathname.startsWith(n.to + '/'))}>
+                      <NavLink to={n.to}>
+                        <n.icon />
+                        <span>{n.label}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
         <SidebarGroup>
           <SidebarGroupLabel>Zones</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -134,6 +171,25 @@ function AppSidebar({ me }: { me: Me }) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        {groups.slice(1).map((g) => (
+          <SidebarGroup key={g.label}>
+            <SidebarGroupLabel>{g.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {g.items.map((n) => (
+                  <SidebarMenuItem key={n.to}>
+                    <SidebarMenuButton asChild isActive={pathname === n.to}>
+                      <NavLink to={n.to}>
+                        <n.icon />
+                        <span>{n.label}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
@@ -143,6 +199,11 @@ function AppSidebar({ me }: { me: Me }) {
                 <SidebarMenuButton>
                   <CircleUserIcon />
                   <span className="truncate">{me.user}</span>
+                  {me.role === 'viewer' && (
+                    <Badge variant="secondary" className="ml-auto">
+                      read-only
+                    </Badge>
+                  )}
                   {me.dev_mode && (
                     <Badge variant="destructive" className="ml-auto">
                       dev
@@ -160,6 +221,29 @@ function AppSidebar({ me }: { me: Me }) {
         </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
+  )
+}
+
+function HostSwitcher({ me }: { me: Me }) {
+  const hosts = useHosts()
+  const { host, switchTo } = useHostSwitcher()
+  if (!hosts.data?.length && !host) return null
+  const LOCAL = '__local__'
+  return (
+    <Select value={host ?? LOCAL} onValueChange={(v) => switchTo(v === LOCAL ? null : v)}>
+      <SelectTrigger size="sm" className="w-full" aria-label="Managed host">
+        <ServerIcon className="size-4" />
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={LOCAL}>This host ({me.hostname})</SelectItem>
+        {hosts.data?.map((h) => (
+          <SelectItem key={h.id} value={h.id}>
+            {h.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -276,6 +360,10 @@ function ApplyModeControls() {
 
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const status = useStatus()
+  const hosts = useHosts()
+  const { host } = useHostSwitcher()
+  const remote = host ? hosts.data?.find((h) => h.id === host) : null
+  const canEdit = me.role === 'admin'
   return (
     <SidebarProvider>
       <AppSidebar me={me} />
@@ -284,14 +372,27 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-2 h-4" />
           {status.data?.panic_mode && <Badge variant="destructive">PANIC MODE — all traffic dropped</Badge>}
+          {remote && (
+            <Badge variant="outline" className="border-sky-500/50 text-sky-700 dark:text-sky-400">
+              <ServerIcon /> managing {remote.name}
+            </Badge>
+          )}
           <div className="ml-auto flex items-center gap-3">
-            <ApplyModeControls />
-            <GlobalActions />
+            {canEdit ? (
+              <>
+                <ApplyModeControls />
+                <GlobalActions />
+              </>
+            ) : (
+              <Badge variant="secondary">read-only access</Badge>
+            )}
             <ThemeToggle />
           </div>
         </header>
-        <PendingChangesBar />
-        <main className="flex-1 p-4 md:p-6">{children}</main>
+        {canEdit && <PendingChangesBar />}
+        <main className="flex-1 p-4 md:p-6">
+          {children}
+        </main>
       </SidebarInset>
     </SidebarProvider>
   )

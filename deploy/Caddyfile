@@ -1,0 +1,11 @@
+# Caddy in front of richrule (automatic HTTPS with a public DNS name, or `tls internal`).
+# richrule keeps listening on 127.0.0.1:8443; set RICHRULE_SECURE_COOKIES=1 in
+# /etc/richrule/richrule.env.
+firewall.example.com {
+	# tls internal   # uncomment for a private CA certificate instead of Let's Encrypt
+	encode gzip
+	reverse_proxy 127.0.0.1:8443 {
+		# the packet-log page streams server-sent events
+		flush_interval -1
+	}
+}

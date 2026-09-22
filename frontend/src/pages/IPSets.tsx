@@ -1,4 +1,4 @@
-import { PlusIcon, Trash2Icon } from 'lucide-react'
+import { ListPlusIcon, PlusIcon, Trash2Icon } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { useFwMutation, useIPSets } from '@/api/hooks'
@@ -11,14 +11,62 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ExportMenu } from './Zone'
 import { useApplyMode } from '@/lib/apply-mode'
+import { useCanEdit } from '@/lib/session'
 import { mergeItems, removalTarget } from '@/lib/zone-ops'
 
 const TYPES = ['hash:ip', 'hash:net', 'hash:mac', 'hash:ip,port', 'hash:net,port', 'hash:net,iface', 'hash:ip,mark']
 
+function BulkImport({ name, runtimeAvailable, onClose }: { name: string; runtimeAvailable: boolean; onClose: () => void }) {
+  const { target } = useApplyMode()
+  const [text, setText] = useState('')
+  const imp = useFwMutation(
+    () =>
+      api.post<{ added: Record<string, number>; invalid: string[]; parsed: number }>(`/ipsets/${encodeURIComponent(name)}/import`, {
+        text,
+        target: runtimeAvailable ? target : 'permanent',
+      }),
+    (_v, r) =>
+      `Parsed ${r.parsed}; added ${Object.entries(r.added).map(([k, n]) => `${n} (${k})`).join(', ')}` +
+      (r.invalid.length ? `; skipped invalid: ${r.invalid.slice(0, 3).join(', ')}` : ''),
+  )
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Bulk add to {name}</DialogTitle>
+          <DialogDescription>
+            Paste addresses or networks, one per line (or comma/space separated). Lines starting with # are ignored.
+            Existing entries are skipped. Or load a text file.
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea rows={10} className="font-mono text-xs" value={text} onChange={(e) => setText(e.target.value)} placeholder={'203.0.113.0/24\n198.51.100.7'} />
+        <input type="file" accept=".txt,.list,.zone,.csv,text/plain" className="text-sm"
+          onChange={(e) => e.target.files?.[0]?.text().then(setText)} />
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => imp.mutateAsync(undefined).then(onClose, () => {})} disabled={!text.trim() || imp.isPending}>Import</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function IPSetCard({ name, runtime, permanent }: { name: string; runtime?: IPSet; permanent?: IPSet }) {
   const { target } = useApplyMode()
   const [entry, setEntry] = useState('')
+  const [bulk, setBulk] = useState(false)
+  const canEdit = useCanEdit()
   const set = permanent ?? runtime!
   const entries = mergeItems(runtime?.entries, permanent?.entries, (e) => e)
   const change = useFwMutation(
@@ -40,7 +88,9 @@ function IPSetCard({ name, runtime, permanent }: { name: string; runtime?: IPSet
           <span className="ml-1">{entries.length} entries · use as <code>ipset:{name}</code> in sources</span>
         </CardDescription>
         {permanent && (
-          <CardAction>
+          <CardAction className="flex gap-1">
+            {canEdit && <Button size="sm" variant="outline" onClick={() => setBulk(true)}><ListPlusIcon /> Bulk add</Button>}
+            <ExportMenu kind="ipset" name={name} />
             <ConfirmButton size="icon-sm" destructive aria-label="Delete ipset" title={`Delete IP set ${name}?`}
               description="Fails if any zone or rule still references it." confirmLabel="Delete" onConfirm={() => del.mutate(undefined)}>
               <Trash2Icon />
@@ -49,19 +99,19 @@ function IPSetCard({ name, runtime, permanent }: { name: string; runtime?: IPSet
         )}
       </CardHeader>
       <CardContent className="grid gap-3">
-        <form className="flex gap-2" onSubmit={(e) => {
+        {canEdit && <form className="flex gap-2" onSubmit={(e) => {
           e.preventDefault()
           change.mutateAsync({ action: 'add', entry, target: runtime ? target : 'permanent' }).then(() => setEntry(''), () => {})
         }}>
           <Input className="h-8" placeholder="entry (e.g. 203.0.113.7)" value={entry} onChange={(e) => setEntry(e.target.value)} />
           <Button size="sm" type="submit" disabled={!entry}><PlusIcon /> Add</Button>
-        </form>
+        </form>}
         <ul className="max-h-72 divide-y overflow-y-auto rounded-md border">
           {entries.map((m) => (
             <li key={m.key} className="flex items-center gap-2 px-3 py-1.5 font-mono text-sm">
               <span className="flex-1">{m.item}</span>
               <PresenceBadge where={m} />
-              <Button variant="ghost" size="icon-xs" aria-label="Remove entry" onClick={() => {
+              <Button variant="ghost" size="icon-xs" aria-label="Remove entry" disabled={!canEdit} onClick={() => {
                 const t = removalTarget(m, target)
                 if (t) change.mutate({ action: 'remove', entry: m.item, target: t })
               }}>
@@ -72,12 +122,14 @@ function IPSetCard({ name, runtime, permanent }: { name: string; runtime?: IPSet
           {entries.length === 0 && <li className="px-3 py-2 text-sm text-muted-foreground">Empty</li>}
         </ul>
       </CardContent>
+      {bulk && <BulkImport name={name} runtimeAvailable={!!runtime} onClose={() => setBulk(false)} />}
     </Card>
   )
 }
 
 export default function IPSetsPage() {
   const ipsets = useIPSets()
+  const canEdit = useCanEdit()
   const [form, setForm] = useState({ name: '', type: 'hash:ip', family: 'inet' })
   const create = useFwMutation(() => api.post('/ipsets', form), 'IP set created — reload to activate it')
 
@@ -94,7 +146,7 @@ export default function IPSetsPage() {
           <CardTitle>IP sets</CardTitle>
           <CardDescription>Named address lists usable as rich rule sources/destinations and zone sources.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent hidden={!canEdit}>
           <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => {
             e.preventDefault()
             create.mutateAsync(undefined).then(() => setForm({ ...form, name: '' }), () => {})

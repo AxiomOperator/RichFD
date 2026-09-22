@@ -3,10 +3,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Presence } from '@/lib/zone-ops'
+import { useCanEdit } from '@/lib/session'
 
 /** Shows when an item exists only in runtime or only in permanent config, with a sync action. */
 export function PresenceBadge({ where, onSync }: { where: Presence; onSync?: () => void }) {
+  const canEdit = useCanEdit()
   if (where.runtime && where.permanent) return null
+  if (!canEdit) onSync = undefined
   const label = where.runtime ? 'runtime only' : 'permanent only'
   const hint = where.runtime
     ? 'Active now but will be lost on reload. Click to save it to permanent config.'

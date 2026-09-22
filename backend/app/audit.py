@@ -30,6 +30,9 @@ def record(user: str, action: str, detail: dict | None = None, ok: bool = True) 
                 f.write(json.dumps(entry) + "\n")
         except OSError as e:
             _log.warning("cannot write audit log %s: %s", settings.audit_log, e)
+    from . import notify
+
+    notify.dispatch(entry)
 
 
 def tail(limit: int = 200) -> list[dict]:

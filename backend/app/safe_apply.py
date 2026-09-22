@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from . import audit
 from .fw import Applied, FwError, Op, firewall
+from .history import history
 
 
 @dataclass
@@ -70,8 +71,9 @@ def confirm(pid: str, user: str) -> Pending:
     """Keep the runtime change; also write it to permanent config if requested."""
     with _lock:
         p = _take(pid)
-    if p.persist:
-        firewall.apply(p.ops, "permanent")
+    with history.change(user, "safe-apply confirm: " + "; ".join(o.describe() for o in p.ops[:3])):
+        if p.persist:
+            firewall.apply(p.ops, "permanent")
     audit.record(user, "safe-apply confirm", {"ops": [o.describe() for o in p.ops], "persist": p.persist})
     return p
 
@@ -79,7 +81,8 @@ def confirm(pid: str, user: str) -> Pending:
 def revert(pid: str, user: str, reason: str = "manual") -> list[str]:
     with _lock:
         p = _take(pid)
-    errors = firewall.undo(p.applied)
+    with history.change(user, f"safe-apply revert ({reason})"):
+        errors = firewall.undo(p.applied)
     audit.record(user, f"safe-apply revert ({reason})", {"ops": [o.describe() for o in p.ops], "errors": errors})
     return errors
 

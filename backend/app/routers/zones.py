@@ -3,8 +3,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from .. import audit
 from ..auth import Session, require_user
+from ..changes import changing
 from ..fw import FwError, firewall
 
 router = APIRouter(prefix="/api/zones", tags=["zones"])
@@ -42,8 +42,8 @@ class CreateZone(BaseModel):
 
 @router.post("")
 def create_zone(body: CreateZone, session: Session = Depends(require_user)):
-    firewall.create_zone(body.name, body.target, body.short, body.description)
-    audit.record(session.user, "create zone", body.model_dump())
+    with changing(session, "create zone", {"zone": body.name, "target": body.target}):
+        firewall.create_zone(body.name, body.target, body.short, body.description)
     return {"ok": True, "note": "Zone created in permanent config; reload to activate it."}
 
 
@@ -56,20 +56,20 @@ class UpdateZone(BaseModel):
 @router.patch("/{zone}")
 def update_zone(zone: str, body: UpdateZone, session: Session = Depends(require_user)):
     fields = body.model_dump(exclude_none=True)
-    firewall.update_zone(zone, fields)
-    audit.record(session.user, "update zone", {"zone": zone, **fields})
+    with changing(session, "update zone", {"zone": zone, **fields}):
+        firewall.update_zone(zone, fields)
     return {"ok": True}
 
 
 @router.post("/{zone}/reset")
 def reset_zone(zone: str, session: Session = Depends(require_user)):
-    firewall.reset_zone(zone)
-    audit.record(session.user, "reset zone to defaults", {"zone": zone})
+    with changing(session, "reset zone to defaults", {"zone": zone}):
+        firewall.reset_zone(zone)
     return {"ok": True, "note": "Zone reset in permanent config; reload to apply."}
 
 
 @router.delete("/{zone}")
 def delete_zone(zone: str, session: Session = Depends(require_user)):
-    firewall.delete_zone(zone)
-    audit.record(session.user, "delete zone", {"zone": zone})
+    with changing(session, "delete zone", {"zone": zone}):
+        firewall.delete_zone(zone)
     return {"ok": True, "note": "Zone removed from permanent config; reload to apply."}

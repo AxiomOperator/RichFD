@@ -4,7 +4,7 @@ import copy
 
 import pytest
 from fastapi.testclient import TestClient
-from firewall.client import FirewallClientZoneSettings
+from firewall.client import FirewallClientPolicySettings, FirewallClientServiceSettings, FirewallClientZoneSettings
 from firewall import errors
 from firewall.errors import FirewallError
 
@@ -95,6 +95,68 @@ class FakeConfig:
     def addZone(self, name, settings):
         self.fake.permanent[name] = settings.getSettingsDict()
 
+    def getPolicyNames(self):
+        return list(self.fake.perm_policies)
+
+    def getPolicyByName(self, name):
+        if name not in self.fake.perm_policies:
+            raise FirewallError(errors.INVALID_POLICY, name)
+        return FakePolicyObj(self.fake.perm_policies, name)
+
+    def addPolicy(self, name, settings):
+        self.fake.perm_policies[name] = copy.deepcopy(settings.getSettingsDict())
+
+    def getServiceNames(self):
+        return list(self.fake.services)
+
+    def getServiceByName(self, name):
+        if name not in self.fake.services:
+            raise FirewallError(errors.INVALID_SERVICE, name)
+        return FakeServiceObj(self.fake.services, name)
+
+    def addService(self, name, settings):
+        self.fake.services[name] = {"settings": copy.deepcopy(settings.getSettingsDict()), "builtin": False}
+
+    def getIPSetNames(self):
+        return list(self.fake.ipsets)
+
+
+class FakePolicyObj:
+    def __init__(self, store, name):
+        self.store, self.name = store, name
+
+    def getSettings(self):
+        return FirewallClientPolicySettings(copy.deepcopy(self.store[self.name]))
+
+    def update(self, settings):
+        self.store[self.name] = copy.deepcopy(settings.getSettingsDict())
+
+    def get_property(self, prop):
+        return {"builtin": False, "default": False}[prop]
+
+    def remove(self):
+        del self.store[self.name]
+
+
+class FakeServiceObj:
+    def __init__(self, store, name):
+        self.store, self.name = store, name
+
+    def getSettings(self):
+        return FirewallClientServiceSettings(copy.deepcopy(self.store[self.name]["settings"]))
+
+    def update(self, settings):
+        self.store[self.name]["settings"] = copy.deepcopy(settings.getSettingsDict())
+
+    def get_property(self, prop):
+        return {"builtin": self.store[self.name]["builtin"], "default": True}[prop]
+
+    def remove(self):
+        del self.store[self.name]
+
+    def loadDefaults(self):
+        pass
+
 
 class FakeClient:
     fail_on = None  # (action, kind-suffix) that raises, to test rollback
@@ -104,6 +166,13 @@ class FakeClient:
         self.runtime["public"]["services"] = ["ssh"]
         self.permanent = copy.deepcopy(self.runtime)
         self.timeouts = []
+        pol = FirewallClientPolicySettings().getSettingsDict()
+        pol.update({"ingress_zones": ["public"], "egress_zones": ["HOST"], "priority": -10, "target": "CONTINUE"})
+        self.rt_policies = {"pub-host": copy.deepcopy(pol)}
+        self.perm_policies = {"pub-host": copy.deepcopy(pol)}
+        svc = lambda ports: {"settings": {**FirewallClientServiceSettings().getSettingsDict(), "ports": ports}, "builtin": True}
+        self.services = {"ssh": svc([("22", "tcp")]), "http": svc([("80", "tcp")]), "https": svc([("443", "tcp")])}
+        self.ipsets = {}
 
     def __getattr__(self, name):
         for prefix in ("add", "remove"):
@@ -150,6 +219,36 @@ class FakeClient:
 
     def reload(self):
         self.runtime = copy.deepcopy(self.permanent)
+        self.rt_policies = copy.deepcopy(self.perm_policies)
+
+    def getPolicies(self):
+        return list(self.rt_policies)
+
+    def getActivePolicies(self):
+        return {"pub-host": {}}
+
+    def getPolicySettings(self, name):
+        if name not in self.rt_policies:
+            raise FirewallError(errors.INVALID_POLICY, name)
+        return FirewallClientPolicySettings(copy.deepcopy(self.rt_policies[name]))
+
+    def setPolicySettings(self, name, settings, timeout=0):
+        self.rt_policies[name] = copy.deepcopy(settings.getSettingsDict())
+
+    def listServices(self):
+        return list(self.services)
+
+    def getServiceSettings(self, name):
+        return FirewallClientServiceSettings(copy.deepcopy(self.services[name]["settings"]))
+
+    def getIPSets(self):
+        return list(self.ipsets)
+
+    def getEntries(self, name):
+        return self.ipsets[name]
+
+    def getHelpers(self):
+        return ["ftp", "tftp"]
 
 
 def _kind(suffix):
@@ -164,6 +263,19 @@ def fake(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "dev_user", "tester")
     monkeypatch.setattr(settings, "_secret", b"x" * 32)
     safe_apply._pending = None
+    monkeypatch.setattr(settings, "state_dir", tmp_path / "state")
+    # Fresh history bound to temp dirs; a fake /etc/firewalld with one zone file.
+    fwdir = tmp_path / "etc-firewalld"
+    (fwdir / "zones").mkdir(parents=True)
+    (fwdir / "zones" / "public.xml").write_text("<zone/>")
+    from app.history import history
+
+    monkeypatch.setattr(history, "fw_dir", fwdir)
+    monkeypatch.setattr(history, "repo", tmp_path / "history")
+    monkeypatch.setattr(history, "tree", tmp_path / "history" / "tree")
+    monkeypatch.setattr(history, "_git_ok", None)
+    monkeypatch.setattr(history, "_runtime", None)
+    client.fwdir = fwdir
     yield client
     if safe_apply._pending:
         safe_apply._pending.timer.cancel()

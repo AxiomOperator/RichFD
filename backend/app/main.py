@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -6,17 +7,41 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .fw import FwError
-from .routers import audit, auth, catalog, ops, richrules, status, zones
+from .history import history
+from .routers import (
+    analysis,
+    audit,
+    auth,
+    catalog,
+    history as history_router,
+    hosts,
+    ops,
+    policies,
+    richrules,
+    status,
+    templates,
+    transfer,
+    zones,
+)
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="richrule", docs_url="/api/docs", openapi_url="/api/openapi.json")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    history.start()
+    yield
+    history.stop()
+
+
+def create_app(watch: bool = True) -> FastAPI:
+    app = FastAPI(title="richrule", docs_url="/api/docs", openapi_url="/api/openapi.json",
+                  lifespan=lifespan if watch else None)
 
     @app.exception_handler(FwError)
     async def fw_error(request: Request, exc: FwError):
         return JSONResponse({"detail": exc.message}, status_code=exc.status)
 
-    for r in (auth, status, zones, ops, richrules, catalog, audit):
+    for r in (auth, status, zones, policies, ops, richrules, catalog, audit, history_router, analysis,
+              transfer, templates, hosts):
         app.include_router(r.router)
 
     @app.middleware("http")
@@ -25,6 +50,8 @@ def create_app() -> FastAPI:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "same-origin")
+        if settings.tls_cert:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
         if request.url.path.startswith("/api"):
             response.headers.setdefault("Cache-Control", "no-store")
         return response
@@ -56,7 +83,12 @@ app = create_app()
 def run() -> None:
     import uvicorn
 
-    uvicorn.run(app, host=settings.host, port=settings.port, proxy_headers=False)
+    tls = {}
+    if settings.tls_cert:
+        if not settings.tls_key:
+            raise SystemExit("RICHRULE_TLS_CERT is set but RICHRULE_TLS_KEY is not")
+        tls = {"ssl_certfile": settings.tls_cert, "ssl_keyfile": settings.tls_key}
+    uvicorn.run(app, host=settings.host, port=settings.port, proxy_headers=False, **tls)
 
 
 if __name__ == "__main__":

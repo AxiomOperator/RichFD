@@ -5,11 +5,24 @@ import { api, ApiError, setCsrf } from '@/api/client'
 import type { Me } from '@/api/types'
 import { AppShell } from '@/components/AppShell'
 import { ApplyModeProvider } from '@/lib/apply-mode'
+import { HostProvider } from '@/lib/host'
+import { RiskProvider } from '@/lib/risk'
+import { SessionContext } from '@/lib/session'
 import AuditPage from '@/pages/Audit'
 import Dashboard from '@/pages/Dashboard'
+import DeniedPage from '@/pages/Denied'
+import DirectPage from '@/pages/Direct'
+import HistoryPage from '@/pages/History'
+import HostsPage from '@/pages/Hosts'
+import ImportExportPage from '@/pages/ImportExport'
 import IPSetsPage from '@/pages/IPSets'
 import LoginPage from '@/pages/Login'
+import PoliciesPage from '@/pages/Policies'
+import PolicyPage from '@/pages/Policy'
 import ServicesPage from '@/pages/Services'
+import SettingsPage from '@/pages/Settings'
+import TemplatesPage from '@/pages/Templates'
+import TesterPage from '@/pages/Tester'
 import ZonePage from '@/pages/Zone'
 
 export default function App() {
@@ -41,17 +54,33 @@ export default function App() {
   if (!me.data) return <LoginPage />
 
   return (
-    <ApplyModeProvider>
-      <AppShell me={me.data}>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/zones/:name" element={<ZonePage />} />
-          <Route path="/services" element={<ServicesPage />} />
-          <Route path="/ipsets" element={<IPSetsPage />} />
-          <Route path="/audit" element={<AuditPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </AppShell>
-    </ApplyModeProvider>
+    <SessionContext.Provider value={me.data}>
+      <HostProvider>
+        <ApplyModeProvider>
+          <RiskProvider>
+            <AppShell me={me.data}>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/zones/:name" element={<ZonePage />} />
+                <Route path="/policies" element={<PoliciesPage />} />
+                <Route path="/policies/:name" element={<PolicyPage />} />
+                <Route path="/services" element={<ServicesPage />} />
+                <Route path="/ipsets" element={<IPSetsPage />} />
+                <Route path="/tester" element={<TesterPage />} />
+                <Route path="/denied" element={<DeniedPage />} />
+                <Route path="/templates" element={<TemplatesPage />} />
+                <Route path="/history" element={<HistoryPage />} />
+                <Route path="/import-export" element={<ImportExportPage />} />
+                <Route path="/direct" element={<DirectPage />} />
+                <Route path="/audit" element={<AuditPage />} />
+                <Route path="/hosts" element={<HostsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </AppShell>
+          </RiskProvider>
+        </ApplyModeProvider>
+      </HostProvider>
+    </SessionContext.Provider>
   )
 }

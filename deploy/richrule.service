@@ -5,26 +5,25 @@ Wants=firewalld.service
 
 [Service]
 Type=simple
-# Root is required to change firewalld config over D-Bus and to verify passwords via PAM.
+# Root is required to change firewalld config over D-Bus, verify passwords via PAM,
+# snapshot /etc/firewalld and read the kernel log.
 User=root
 WorkingDirectory=/opt/richrule/backend
-Environment=RICHRULE_HOST=127.0.0.1
-Environment=RICHRULE_PORT=8443
-Environment=RICHRULE_ALLOWED_GROUP=wheel
-# /etc/pam.d/richrule (installed by install.sh): password-only auth.
 Environment=RICHRULE_PAM_SERVICE=richrule
-# Set to 1 when served over HTTPS (e.g. behind a TLS reverse proxy).
-Environment=RICHRULE_SECURE_COOKIES=0
 Environment=RICHRULE_STATIC_DIR=/opt/richrule/frontend/dist
+# Site settings (listen address, TLS, groups, ...). Values here override the lines above.
+EnvironmentFile=-/etc/richrule/richrule.env
 ExecStart=/opt/richrule/backend/.venv/bin/python -m app.main
 Restart=on-failure
 
 StateDirectory=richrule
+StateDirectoryMode=0700
 LogsDirectory=richrule
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
+# /etc/firewalld: restoring snapshots writes config files.
 ReadWritePaths=/etc/firewalld
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

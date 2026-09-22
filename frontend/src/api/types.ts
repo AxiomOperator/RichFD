@@ -97,6 +97,145 @@ export interface ZoneDetail {
   permanent: ZoneView | null
 }
 
+export interface PolicyView extends Omit<ZoneView, 'interfaces' | 'sources' | 'forward' | 'icmp_block_inversion' | 'ingress_priority' | 'egress_priority'> {
+  ingress_zones: string[]
+  egress_zones: string[]
+  priority: number
+  disable: boolean
+}
+
+export interface PolicyDetail {
+  name: string
+  runtime: PolicyView | null
+  permanent: PolicyView | null
+}
+
+export interface PolicySummary {
+  name: string
+  runtime: boolean
+  permanent: boolean
+  active: boolean
+  ingress_zones: string[]
+  egress_zones: string[]
+  priority: number
+  target: string
+  short: string
+  disable: boolean
+}
+
+export type Scope = 'zone' | 'policy'
+
+export interface RiskResult {
+  level: 'ok' | 'warning' | 'danger'
+  warnings: { level: 'warning' | 'danger'; message: string }[]
+  connections: { what: string; before: string; after: string; decided_by: string }[]
+  force_safe: boolean
+}
+
+export interface TesterStep {
+  stage: string
+  item: string
+  result: 'match' | 'no-match' | 'unknown'
+  detail: string
+  verdict: string | null
+}
+
+export interface TesterResult {
+  zone: string
+  zone_reason: string
+  verdict: 'ACCEPT' | 'REJECT' | 'DROP' | 'FORWARDED'
+  decided_by: string
+  steps: TesterStep[]
+  notes: string[]
+}
+
+export interface DeniedEntry {
+  ts: string
+  prefix: string
+  in: string
+  out: string
+  src: string
+  dst: string
+  proto: string
+  spt: number | null
+  dpt: number | null
+  len: number | null
+  icmp_type: string
+  zone: string
+  policy?: string
+  action: string
+  kind: 'denied' | 'logged' | 'invalid'
+  cursor: string
+}
+
+export interface HistoryEntry {
+  id: string
+  short: string
+  author: string
+  date: string
+  message: string
+  stat: string
+  external: boolean
+}
+
+export interface HistoryLog {
+  enabled: boolean
+  firewalld_dir: string
+  watch_interval: number
+  entries: HistoryEntry[]
+}
+
+export interface TemplateParam {
+  name: string
+  label: string
+  type: 'zone' | 'text' | 'bool' | 'select' | 'textarea' | 'service'
+  placeholder?: string
+  default?: string | boolean
+  options?: string[]
+}
+
+export interface Template {
+  id: string
+  title: string
+  description: string
+  params: TemplateParam[]
+}
+
+export interface Host {
+  id: string
+  name: string
+  url: string
+  verify_tls: boolean
+  ca_pem: string
+  token_set: boolean
+}
+
+export interface DirectRules {
+  chains: { ipv: string; table: string; chain: string }[]
+  rules: { ipv: string; table: string; chain: string; priority: number; args: string[] }[]
+  passthroughs: { ipv: string; args: string[] }[]
+}
+
+export interface NotificationSettings {
+  webhook_url: string
+  syslog: boolean
+  email_to: string
+  email_from: string
+  smtp_host: string
+  smtp_port: number
+  smtp_starttls: boolean
+  smtp_user: string
+  smtp_password_set: boolean
+  events: 'changes' | 'all'
+}
+
+export interface ImportPlanItem {
+  kind: 'zones' | 'policies' | 'services' | 'ipsets'
+  name: string
+  action: 'create' | 'update' | 'unchanged'
+  changes: string[]
+}
+
 export type OpKind =
   | 'service'
   | 'port'
@@ -110,12 +249,16 @@ export type OpKind =
   | 'masquerade'
   | 'forward'
   | 'icmp-block-inversion'
+  | 'ingress-zone'
+  | 'egress-zone'
 
 export interface Op {
   action: 'add' | 'remove'
   kind: OpKind
+  /** Zone name, or policy name when scope is 'policy'. */
   zone: string
   value: Record<string, string>
+  scope?: 'zone' | 'policy'
 }
 
 export interface Service {
@@ -123,6 +266,15 @@ export interface Service {
   short: string
   description: string
   ports: PortSpec[]
+  protocols: string[]
+  source_ports: PortSpec[]
+  modules: string[]
+  helpers: string[]
+  includes: string[]
+  destination: { ipv4?: string; ipv6?: string }
+  builtin: boolean
+  modified: boolean
+  runtime: boolean
 }
 
 export interface IPSet {
@@ -151,6 +303,9 @@ export interface AuditEntry {
 export interface Me {
   user: string
   csrf: string
+  role: 'admin' | 'viewer'
   safe_apply_seconds: number
   dev_mode: boolean
+  hostname: string
+  tls: boolean
 }

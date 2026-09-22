@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { useCanEdit } from '@/lib/session'
 
 interface Props {
   title: string
@@ -41,10 +42,13 @@ export function ConfirmButton({
   ...rest
 }: Props) {
   const [open, setOpen] = useState(false)
+  const canEdit = useCanEdit()
+  if (!canEdit) disabled = true
   return (
     <>
       {asMenuItem ? (
         <DropdownMenuItem
+          disabled={disabled}
           variant={destructive ? 'destructive' : 'default'}
           onSelect={(e) => {
             e.preventDefault()

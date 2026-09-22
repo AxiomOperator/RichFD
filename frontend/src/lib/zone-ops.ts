@@ -1,6 +1,7 @@
 import { useApplyOps } from '@/api/hooks'
-import type { Op, OpKind, Target } from '@/api/types'
+import type { Op, OpKind, Scope, Target } from '@/api/types'
 import { useApplyMode } from '@/lib/apply-mode'
+import { useRiskCheck } from '@/lib/risk'
 
 export interface Presence {
   runtime: boolean
@@ -35,24 +36,30 @@ export function removalTarget(where: Presence, chosen: Target): Target | null {
   return null
 }
 
-/** Zone change helpers honoring the global apply mode (target + safe apply). */
-export function useZoneOps(zone: string) {
+/** Change helpers for one zone or policy, honoring the global apply mode and lock-out checks. */
+export function useRuleOps(scope: Scope, name: string) {
   const { target, safe } = useApplyMode()
   const mutation = useApplyOps()
+  const checkRisk = useRiskCheck()
 
-  function run(ops: Op[], where: Target = target, opts: { timeout?: number } = {}) {
-    const useSafe = safe && where !== 'permanent' && !opts.timeout
+  async function run(ops: Op[], where: Target = target, opts: { timeout?: number } = {}) {
+    const decision = await checkRisk({ ops, target: where })
+    if (!decision.proceed) throw new Error('cancelled')
+    const useSafe = (safe || decision.safe) && where !== 'permanent' && !opts.timeout
     return mutation.mutateAsync({ ops, target: where, timeout: opts.timeout, safe: useSafe })
   }
 
-  const op = (action: Op['action'], kind: OpKind, value: Record<string, string> = {}): Op => ({
+  const op = (action: Op['action'], kind: OpKind, value: Record<string, string> = {}, on: string = name, sc: Scope = scope): Op => ({
     action,
     kind,
-    zone,
+    zone: on,
     value,
+    scope: sc,
   })
 
   return {
+    scope,
+    name,
     target,
     pending: mutation.isPending,
     run,
@@ -69,3 +76,5 @@ export function useZoneOps(zone: string) {
     op,
   }
 }
+
+export type RuleOps = ReturnType<typeof useRuleOps>

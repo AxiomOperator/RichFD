@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useCanEdit } from '@/lib/session'
 
 function Stat({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -95,6 +96,7 @@ export default function Dashboard() {
   const status = useStatus()
   const zones = useZones()
   const [newZone, setNewZone] = useState(false)
+  const canEdit = useCanEdit()
   const panic = useFwMutation((enabled: boolean) => api.post('/panic', { enabled }), (on) => (on ? 'Panic mode ON' : 'Panic mode off'))
   const logDenied = useFwMutation((value: string) => api.post('/log-denied', { value }), 'Log-denied updated')
 
@@ -115,7 +117,7 @@ export default function Dashboard() {
         </Stat>
         <Stat label="Active zones">{Object.keys(s.active_zones).length}</Stat>
         <Stat label="Log denied packets">
-          <Select value={s.log_denied} onValueChange={(v) => logDenied.mutate(v)}>
+          <Select value={s.log_denied} onValueChange={(v) => logDenied.mutate(v)} disabled={!canEdit}>
             <SelectTrigger size="sm" className="w-36" aria-label="Log denied"><SelectValue /></SelectTrigger>
             <SelectContent>
               {['off', 'all', 'unicast', 'broadcast', 'multicast'].map((v) => (
@@ -131,7 +133,7 @@ export default function Dashboard() {
           <CardTitle>Zones</CardTitle>
           <CardDescription>Active zones have interfaces or sources bound to them.</CardDescription>
           <CardAction>
-            <Button size="sm" onClick={() => setNewZone(true)}><PlusIcon /> New zone</Button>
+            {canEdit && <Button size="sm" onClick={() => setNewZone(true)}><PlusIcon /> New zone</Button>}
           </CardAction>
         </CardHeader>
         <CardContent>
@@ -177,7 +179,7 @@ export default function Dashboard() {
           </CardDescription>
           <CardAction>
             {s.panic_mode ? (
-              <Button variant="outline" onClick={() => panic.mutate(false)}>Disable panic mode</Button>
+              <Button variant="outline" onClick={() => panic.mutate(false)} disabled={!canEdit}>Disable panic mode</Button>
             ) : (
               <ConfirmButton variant="destructive" destructive title="Enable panic mode?"
                 description="All network traffic will be dropped immediately. You will lose access to this web UI."

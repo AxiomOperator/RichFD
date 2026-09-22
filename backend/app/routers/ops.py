@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from .. import audit, safe_apply
+from .. import risk, safe_apply
 from ..auth import Session, require_user
+from ..changes import changing
 from ..config import settings
-from ..fw import FwError, Op, Target, firewall
+from ..fw import KINDS, FwError, Op, Target, firewall
+from ..history import history
 
 router = APIRouter(prefix="/api", tags=["changes"])
 
@@ -16,19 +18,46 @@ class OpsRequest(BaseModel):
     timeout: int = Field(0, ge=0)
 
 
+_SETTINGS_KEY = {"service": "services", "port": "ports", "protocol": "protocols", "source-port": "source_ports",
+                 "forward-port": "forward_ports", "icmp-block": "icmp_blocks", "rich-rule": "rules_str"}
+
+
 @router.post("/ops")
 def apply_ops(body: OpsRequest, session: Session = Depends(require_user)):
     """Apply a batch of changes atomically (all or nothing)."""
     if body.timeout and body.target != "runtime":
         raise FwError("timeout is only valid with target 'runtime'")
-    detail = {"ops": [o.describe() for o in body.ops], "target": body.target, "timeout": body.timeout}
-    try:
+    detail = {"ops": [o.describe() for o in body.ops], "target": body.target}
+    if body.timeout:
+        detail["timeout"] = body.timeout
+    with changing(session, "change", detail):
         firewall.apply(body.ops, body.target, body.timeout)
-    except FwError as e:
-        audit.record(session.user, "change", {**detail, "error": e.message}, ok=False)
-        raise
-    audit.record(session.user, "change", detail)
+        if body.timeout:
+            # Expiry of timed items is expected; don't report it as an external change.
+            for o in body.ops:
+                if o.action == "add" and o.kind in _SETTINGS_KEY:
+                    _, fields, _ = KINDS[o.kind]
+                    vals = [str(o.value.get(f, "")) for f in fields]
+                    if o.kind == "rich-rule":
+                        from ..richrule import normalize
+
+                        vals = [normalize(vals[0])]
+                    history.expect_expiry(o.zone, o.scope, _SETTINGS_KEY[o.kind],
+                                          vals[0] if len(vals) == 1 else vals, body.timeout)
     return {"ok": True}
+
+
+class RiskRequest(BaseModel):
+    ops: list[Op] = []
+    target: Target = "both"
+    zone_target: dict | None = None  # {"zone": ..., "target": ...} for a proposed target change
+
+
+@router.post("/risk")
+def analyze_risk(body: RiskRequest, request: Request, session: Session = Depends(require_user)):
+    """Check a proposed change for lock-out risks before applying it."""
+    client = request.client.host if request.client else None
+    return risk.analyze(body.ops, body.target, client, body.zone_target)
 
 
 class SafeApplyRequest(BaseModel):
@@ -45,8 +74,8 @@ def safe_apply_status(session: Session = Depends(require_user)):
 
 @router.post("/safe-apply")
 def safe_apply_begin(body: SafeApplyRequest, session: Session = Depends(require_user)):
-    p = safe_apply.begin(body.ops, session.user, settings.safe_apply_seconds, body.persist)
-    audit.record(session.user, "safe-apply begin", {"ops": [o.describe() for o in body.ops]})
+    with changing(session, "safe-apply begin", {"ops": [o.describe() for o in body.ops]}):
+        p = safe_apply.begin(body.ops, session.user, settings.safe_apply_seconds, body.persist)
     return p.view()
 
 
