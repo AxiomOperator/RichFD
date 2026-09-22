@@ -18,6 +18,9 @@ from . import richrule
 from .fw import FwError, Op, firewall
 from .transfer import parse_address_list
 
+CLOUDFLARE_URLS = {"ipv4": "https://www.cloudflare.com/ips-v4", "ipv6": "https://www.cloudflare.com/ips-v6"}
+TOR_EXIT_URL = "https://check.torproject.org/torbulkexitlist"
+
 COUNTRY_URLS = {
     "ipv4": "https://www.ipdeny.com/ipblocks/data/aggregated/{cc}-aggregated.zone",
     "ipv6": "https://www.ipdeny.com/ipv6/ipaddresses/aggregated/{cc}-aggregated.zone",
@@ -36,11 +39,11 @@ TEMPLATES = [
     },
     {
         "id": "rate-limit-ssh",
-        "title": "Rate-limit SSH",
-        "description": "Accept new SSH connections only up to a rate (slows down brute-force attempts); optionally log the rest.",
+        "title": "Rate-limit SSH (3 per minute)",
+        "description": "Accept at most 3 new SSH connections per minute (adjustable); slows down brute-force attempts. Optionally log the rest.",
         "params": [
             {"name": "zone", "label": "Zone", "type": "zone"},
-            {"name": "rate", "label": "Max new connections", "type": "text", "default": "10/m", "placeholder": "10/m"},
+            {"name": "rate", "label": "Max new connections", "type": "text", "default": "3/m", "placeholder": "3/m"},
             {"name": "log", "label": "Log connections over the limit", "type": "bool", "default": True},
             {"name": "remove_open", "label": "Remove the unrestricted ssh service", "type": "bool", "default": True},
         ],
@@ -54,6 +57,27 @@ TEMPLATES = [
             {"name": "country", "label": "Country code", "type": "text", "placeholder": "e.g. kp"},
             {"name": "family", "label": "Family", "type": "select", "options": ["ipv4", "ipv6"], "default": "ipv4"},
             {"name": "addresses", "label": "Address list (optional; leave empty to download)", "type": "textarea"},
+            {"name": "log", "label": "Log dropped packets", "type": "bool", "default": False},
+            {"name": "reload", "label": "Reload firewalld to activate now", "type": "bool", "default": True},
+        ],
+    },
+    {
+        "id": "cloudflare-only",
+        "title": "Allow web ports only from Cloudflare",
+        "description": "For sites behind Cloudflare: accept the chosen ports only from Cloudflare's published address ranges (IP sets refreshed daily) and close them to everyone else.",
+        "params": [
+            {"name": "zone", "label": "Zone", "type": "zone"},
+            {"name": "ports", "label": "Ports", "type": "text", "default": "80,443", "placeholder": "80,443"},
+            {"name": "remove_open", "label": "Remove unrestricted http/https services and ports from the zone", "type": "bool", "default": True},
+            {"name": "reload", "label": "Reload firewalld to activate now", "type": "bool", "default": True},
+        ],
+    },
+    {
+        "id": "block-tor",
+        "title": "Block Tor exit nodes",
+        "description": "Drop traffic from the Tor Project's list of exit relays (IP set refreshed every 6 hours).",
+        "params": [
+            {"name": "zone", "label": "Zone", "type": "zone"},
             {"name": "log", "label": "Log dropped packets", "type": "bool", "default": False},
             {"name": "reload", "label": "Reload firewalld to activate now", "type": "bool", "default": True},
         ],
@@ -177,7 +201,7 @@ def build(template_id: str, params: dict) -> dict:
                     raise FwError(f"Invalid entries: {', '.join(invalid[:5])}")
                 steps.append({"kind": "ipset-fill", "name": name, "entries": entries})
             else:
-                steps.append({"kind": "ipset-fill", "name": name, "url": COUNTRY_URLS[fam].format(cc=cc)})
+                steps.append({"kind": "ipset-fill", "name": name, "url": COUNTRY_URLS[fam].format(cc=cc), "feed_hours": 24 * 7})
             log = ' log prefix="geo-block: " level="info" limit value="1/m"' if p.get("log") else ""
             steps.append({"kind": "ops", "target": "permanent",
                           "ops": [op("add", "rich-rule", rule=_rule(f'rule family="{fam}" source ipset="{name}"{log} drop'))]})
@@ -186,6 +210,43 @@ def build(template_id: str, params: dict) -> dict:
                 notes.append("Reloading applies the permanent configuration and discards runtime-only changes.")
             else:
                 notes.append("New IP sets only become active after a reload.")
+        case "cloudflare-only":
+            ports = [x.strip() for x in str(p.get("ports") or "").replace(" ", ",").split(",") if x.strip()]
+            if not ports or not all(re.fullmatch(r"\d{1,5}(-\d{1,5})?", x) for x in ports):
+                raise FwError("Ports must be numbers or ranges, e.g. 80,443")
+            ops = []
+            for fam, suffix, family_opt in (("ipv4", "v4", "inet"), ("ipv6", "v6", "inet6")):
+                name = f"cloudflare-{suffix}"
+                steps.append({"kind": "ipset-create", "name": name, "type": "hash:net", "family": family_opt,
+                              "description": f"Cloudflare {fam} ranges (RichFD feed)"})
+                steps.append({"kind": "ipset-fill", "name": name, "url": CLOUDFLARE_URLS[fam], "feed_hours": 24})
+                for port in ports:
+                    ops.append(op("add", "rich-rule", rule=_rule(
+                        f'rule family="{fam}" source ipset="{name}" port port="{port}" protocol="tcp" accept')))
+            if p.get("remove_open"):
+                perm = firewall.zone(zone, "permanent") if _exists(zone, "permanent") else {"services": [], "ports": []}
+                for svc in ("http", "https", "http3"):
+                    if svc in perm["services"]:
+                        ops.append(op("remove", "service", name=svc))
+                for pp in perm["ports"]:
+                    if pp["port"] in ports:
+                        ops.append(op("remove", "port", port=pp["port"], protocol=pp["protocol"]))
+            steps.append({"kind": "ops", "target": "permanent", "ops": ops})
+            if p.get("reload"):
+                steps.append({"kind": "reload"})
+                notes.append("Reloading applies the permanent configuration and discards runtime-only changes.")
+            notes.append("Make sure the site really is proxied through Cloudflare, or it becomes unreachable.")
+        case "block-tor":
+            name = "tor-exit-nodes"
+            steps.append({"kind": "ipset-create", "name": name, "type": "hash:ip", "family": "inet",
+                          "description": "Tor exit relays (RichFD feed)"})
+            steps.append({"kind": "ipset-fill", "name": name, "url": TOR_EXIT_URL, "feed_hours": 6})
+            log = ' log prefix="tor-block: " level="info" limit value="1/m"' if p.get("log") else ""
+            steps.append({"kind": "ops", "target": "permanent", "ops": [op("add", "rich-rule", rule=_rule(
+                f'rule priority="-100" family="ipv4" source ipset="{name}"{log} drop'))]})
+            if p.get("reload"):
+                steps.append({"kind": "reload"})
+            notes.append("The list is refreshed automatically every 6 hours (IP Sets page shows the feed).")
         case "port-forward":
             port = str(p.get("port") or "").strip()
             to_addr = str(p.get("to_addr") or "").strip()
@@ -251,6 +312,8 @@ def describe(plan: dict) -> list[str]:
             lines.append(f"create IP set {s['name']} ({s['type']}, {s['family']}) [permanent]")
         elif s["kind"] == "ipset-fill":
             src = f"download {s['url']}" if s.get("url") else f"{len(s['entries'])} entries"
+            if s.get("feed_hours"):
+                src += f", refreshed every {s['feed_hours']}h"
             lines.append(f"fill IP set {s['name']} from {src} [permanent]")
         elif s["kind"] == "reload":
             lines.append("reload firewalld")
@@ -286,6 +349,11 @@ def run(plan: dict, target: str) -> list[str]:
             entries = s.get("entries") or download_list(s["url"])
             firewall.call(lambda c: c.config().getIPSetByName(s["name"]).setEntries(entries))
             done.append(f"IP set {s['name']}: {len(entries)} entries")
+            if s.get("url") and s.get("feed_hours"):
+                from .scheduler import register_feed
+
+                register_feed(s["name"], s["url"], s["feed_hours"])
+                done.append(f"IP set {s['name']} refreshes every {s['feed_hours']}h")
         elif s["kind"] == "reload":
             firewall.reload()
             done.append("reloaded firewalld")

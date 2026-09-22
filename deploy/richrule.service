@@ -6,7 +6,8 @@ Wants=firewalld.service
 [Service]
 Type=simple
 # Root is required to change firewalld config over D-Bus, verify passwords via PAM,
-# snapshot /etc/firewalld and read the kernel log.
+# snapshot /etc/firewalld, read the kernel log, list sockets with process names (ss -p),
+# close connections (ss -K / conntrack -D) and talk to fail2ban.
 User=root
 WorkingDirectory=/opt/richrule/backend
 Environment=RICHRULE_PAM_SERVICE=richrule
@@ -23,8 +24,9 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-# /etc/firewalld: restoring snapshots writes config files.
-ReadWritePaths=/etc/firewalld
+# /etc/firewalld: restoring snapshots/backups writes config files.
+# /etc/fail2ban: jail settings from the Fail2ban page (ignored if fail2ban is not installed).
+ReadWritePaths=/etc/firewalld -/etc/fail2ban
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

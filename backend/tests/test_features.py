@@ -331,8 +331,11 @@ def test_json_export_roundtrip(api, fake):
 
 
 def test_address_list_parsing():
-    ok, bad = transfer.parse_address_list("# comment\n1.2.3.4\n10.0.0.0/8, 2001:db8::/32 ; note\nnope\n1.2.3.4/32")
-    assert ok == ["1.2.3.4", "10.0.0.0/8", "2001:db8::/32"] and bad == ["nope"]
+    ok, bad = transfer.parse_address_list("# comment\n1.2.3.4\n10.0.0.0/8, 2001:db8::/32 ; note\nnope\n1.2.3.4/32\n1.2.3.999")
+    assert ok == ["1.2.3.4", "10.0.0.0/8", "2001:db8::/32"] and bad == ["1.2.3.999"]
+    csv = 'ip,comment,added\n"203.0.113.5",scanner,2026-01-01\n198.51.100.0/24,bad net,x\n'
+    ok, bad = transfer.parse_address_list(csv)
+    assert ok == ["203.0.113.5", "198.51.100.0/24"] and bad == []
 
 
 # -- templates -------------------------------------------------------------------------------
@@ -391,9 +394,9 @@ def test_direct_and_misc_endpoints(api, fake):
 def test_ipset_import(api, fake, monkeypatch):
     calls = {}
     monkeypatch.setattr("app.fw.firewall.ipset_add_entries", lambda n, e, t: calls.setdefault("x", (n, e, t)) and {"runtime": len(e)})
-    r = api.post("/api/ipsets/blk/import", json={"text": "1.2.3.4\n5.6.7.0/24\nbad", "target": "runtime"})
+    r = api.post("/api/ipsets/blk/import", json={"text": "1.2.3.4\n5.6.7.0/24\n5.6.7.300", "target": "runtime"})
     assert r.status_code == 200, r.text
-    assert calls["x"] == ("blk", ["1.2.3.4", "5.6.7.0/24"], "runtime") and r.json()["invalid"] == ["bad"]
+    assert calls["x"] == ("blk", ["1.2.3.4", "5.6.7.0/24"], "runtime") and r.json()["invalid"] == ["5.6.7.300"]
 
 
 def test_settings_endpoints(api):

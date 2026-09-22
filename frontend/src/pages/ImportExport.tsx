@@ -1,4 +1,5 @@
-import { DownloadIcon, FileUpIcon, UploadIcon } from 'lucide-react'
+import { DownloadIcon, FileCode2Icon, FileUpIcon, UploadIcon } from 'lucide-react'
+import { ExportCodeDialog, type ExportScope } from '@/components/ExportCode'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api, apiUrl } from '@/api/client'
@@ -174,9 +175,53 @@ function ImportCard() {
   )
 }
 
+function AutomationCard() {
+  const zones = useZones()
+  const policies = usePolicies()
+  const [chosenZones, setChosenZones] = useState<string[] | null>(null)
+  const [withPolicies, setWithPolicies] = useState(true)
+  const [withServices, setWithServices] = useState(true)
+  const [withIpsets, setWithIpsets] = useState(true)
+  const [scope, setScope] = useState<ExportScope | null>(null)
+  const all = zones.data?.map((z) => z.name) ?? []
+  const picked = chosenZones ?? all
+  return (
+    <Card className="xl:col-span-2">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><FileCode2Icon className="size-5" /> Automation: Ansible / firewall-cmd</CardTitle>
+        <CardDescription>
+          Prototype here, then roll the same configuration out to many servers: generate an idempotent Ansible
+          playbook (ansible.posix.firewalld) or a firewall-cmd script. Selected rules can also be exported from any
+          zone's rich rules list.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <div className="flex max-h-32 flex-wrap gap-x-4 gap-y-2 overflow-y-auto rounded-md border p-2">
+          {all.map((z) => (
+            <label key={z} className="flex items-center gap-1.5 text-sm">
+              <Checkbox checked={picked.includes(z)} onCheckedChange={(c) => setChosenZones(c ? [...picked, z] : picked.filter((x) => x !== z))} />
+              <span className="font-mono">{z}</span>
+            </label>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <label className="flex items-center gap-1.5"><Checkbox checked={withPolicies} onCheckedChange={(c) => setWithPolicies(c === true)} /> policies ({policies.data?.length ?? 0})</label>
+          <label className="flex items-center gap-1.5"><Checkbox checked={withServices} onCheckedChange={(c) => setWithServices(c === true)} /> custom services</label>
+          <label className="flex items-center gap-1.5"><Checkbox checked={withIpsets} onCheckedChange={(c) => setWithIpsets(c === true)} /> IP sets</label>
+          <Button size="sm" onClick={() => setScope({ zones: picked, policies: withPolicies ? null : [], services: withServices, ipsets: withIpsets })}>
+            Generate
+          </Button>
+        </div>
+      </CardContent>
+      {scope && <ExportCodeDialog title="firewalld configuration" scope={scope} onClose={() => setScope(null)} />}
+    </Card>
+  )
+}
+
 export default function ImportExportPage() {
   return (
     <div className="grid gap-6 xl:grid-cols-2">
+      <AutomationCard />
       <ExportCard />
       <ImportCard />
     </div>

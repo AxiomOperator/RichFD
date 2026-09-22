@@ -30,6 +30,8 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 rpm -q python3-firewall python3-dbus git-core >/dev/null 2>&1 || dnf install -y python3-firewall python3-dbus git-core
+# Optional: conntrack-tools shows forwarded/NATed flows on the Connections page.
+rpm -q conntrack-tools >/dev/null 2>&1 || dnf install -y conntrack-tools || true
 
 echo "==> building frontend"
 # Build as the invoking user so node_modules is not root-owned. Use a login shell (-i):

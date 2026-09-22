@@ -71,6 +71,10 @@ class ZoneStore:
     def getSettings(self):
         return FirewallClientZoneSettings(dict(self.s))
 
+    def update(self, settings):
+        self.s.clear()
+        self.s.update(copy.deepcopy(settings.getSettingsDict()))
+
     def remove(self):
         self.on_remove()
 

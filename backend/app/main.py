@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .fw import FwError
+from . import scheduler
 from .history import history
 from .routers import (
     analysis,
@@ -20,6 +21,7 @@ from .routers import (
     richrules,
     status,
     templates,
+    tools,
     transfer,
     zones,
 )
@@ -28,8 +30,10 @@ from .routers import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     history.start()
+    scheduler.start()
     yield
     history.stop()
+    scheduler.stop()
 
 
 def create_app(watch: bool = True) -> FastAPI:
@@ -41,7 +45,7 @@ def create_app(watch: bool = True) -> FastAPI:
         return JSONResponse({"detail": exc.message}, status_code=exc.status)
 
     for r in (auth, status, zones, policies, ops, richrules, catalog, audit, history_router, analysis,
-              transfer, templates, hosts):
+              transfer, templates, tools, hosts):
         app.include_router(r.router)
 
     @app.middleware("http")

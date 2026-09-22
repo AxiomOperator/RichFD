@@ -9,6 +9,10 @@ import { HostProvider } from '@/lib/host'
 import { RiskProvider } from '@/lib/risk'
 import { SessionContext } from '@/lib/session'
 import AuditPage from '@/pages/Audit'
+import BackupsPage from '@/pages/Backups'
+import ConnectionsPage from '@/pages/Connections'
+import DdnsPage from '@/pages/Ddns'
+import Fail2banPage from '@/pages/Fail2ban'
 import Dashboard from '@/pages/Dashboard'
 import DeniedPage from '@/pages/Denied'
 import DirectPage from '@/pages/Direct'
@@ -68,6 +72,10 @@ export default function App() {
                 <Route path="/ipsets" element={<IPSetsPage />} />
                 <Route path="/tester" element={<TesterPage />} />
                 <Route path="/denied" element={<DeniedPage />} />
+                <Route path="/connections" element={<ConnectionsPage />} />
+                <Route path="/fail2ban" element={<Fail2banPage />} />
+                <Route path="/ddns" element={<DdnsPage />} />
+                <Route path="/backups" element={<BackupsPage />} />
                 <Route path="/templates" element={<TemplatesPage />} />
                 <Route path="/history" element={<HistoryPage />} />
                 <Route path="/import-export" element={<ImportExportPage />} />

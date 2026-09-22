@@ -1,4 +1,6 @@
-import { ListPlusIcon, PlusIcon, Trash2Icon } from 'lucide-react'
+import { ListPlusIcon, PlusIcon, RefreshCwIcon, RssIcon, Trash2Icon } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import type { Feed } from '@/api/types'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { useFwMutation, useIPSets } from '@/api/hooks'
@@ -46,7 +48,7 @@ function BulkImport({ name, runtimeAvailable, onClose }: { name: string; runtime
         <DialogHeader>
           <DialogTitle>Bulk add to {name}</DialogTitle>
           <DialogDescription>
-            Paste addresses or networks, one per line (or comma/space separated). Lines starting with # are ignored.
+            Paste addresses or networks, or load a .txt / .csv file: addresses are picked from any column; headers and # comments are ignored.
             Existing entries are skipped. Or load a text file.
           </DialogDescription>
         </DialogHeader>
@@ -62,7 +64,40 @@ function BulkImport({ name, runtimeAvailable, onClose }: { name: string; runtime
   )
 }
 
-function IPSetCard({ name, runtime, permanent }: { name: string; runtime?: IPSet; permanent?: IPSet }) {
+function FeedRow({ name, feed }: { name: string; feed?: Feed }) {
+  const canEdit = useCanEdit()
+  const [url, setUrl] = useState('')
+  const set = useFwMutation(() => api.put<Feed>(`/feeds/${encodeURIComponent(name)}`, { url, interval_hours: 24 }), (_v, f) =>
+    f.last_error ? `Feed saved, download failed: ${f.last_error}` : `Feed saved: ${f.count} entries loaded`)
+  const refresh = useFwMutation(() => api.post<Feed>(`/feeds/${encodeURIComponent(name)}/refresh`), (_v, f) =>
+    f.last_error ? `Refresh failed: ${f.last_error}` : `Refreshed: ${f.count} entries`)
+  const remove = useFwMutation(() => api.delete(`/feeds/${encodeURIComponent(name)}`), 'Feed removed (entries kept)')
+  if (feed)
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-xs">
+        <RssIcon className="size-3.5 text-sky-600" />
+        <span className="min-w-0 flex-1 truncate">
+          Auto-updated every {feed.interval_hours}h from <span className="font-mono">{feed.url}</span>
+          {feed.last_ok ? ` · last ${new Date(feed.last_ok * 1000).toLocaleString()} (${feed.count} entries)` : ''}
+          {feed.last_error && <span className="text-destructive"> · {feed.last_error}</span>}
+        </span>
+        {canEdit && <Button size="icon-xs" variant="ghost" aria-label="Refresh now" onClick={() => refresh.mutate(undefined)}><RefreshCwIcon /></Button>}
+        {canEdit && <Button size="icon-xs" variant="ghost" aria-label="Remove feed" onClick={() => remove.mutate(undefined)}><Trash2Icon /></Button>}
+      </div>
+    )
+  if (!canEdit) return null
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-muted-foreground">Keep this set updated from a URL (feed)…</summary>
+      <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); set.mutate(undefined) }}>
+        <Input className="h-8" placeholder="https://… (one address per line)" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <Button size="sm" type="submit" disabled={!url.startsWith('http')}>Save &amp; load</Button>
+      </form>
+    </details>
+  )
+}
+
+function IPSetCard({ name, runtime, permanent, feed }: { name: string; runtime?: IPSet; permanent?: IPSet; feed?: Feed }) {
   const { target } = useApplyMode()
   const [entry, setEntry] = useState('')
   const [bulk, setBulk] = useState(false)
@@ -99,6 +134,7 @@ function IPSetCard({ name, runtime, permanent }: { name: string; runtime?: IPSet
         )}
       </CardHeader>
       <CardContent className="grid gap-3">
+        {permanent && <FeedRow name={name} feed={feed} />}
         {canEdit && <form className="flex gap-2" onSubmit={(e) => {
           e.preventDefault()
           change.mutateAsync({ action: 'add', entry, target: runtime ? target : 'permanent' }).then(() => setEntry(''), () => {})
@@ -130,6 +166,7 @@ function IPSetCard({ name, runtime, permanent }: { name: string; runtime?: IPSet
 export default function IPSetsPage() {
   const ipsets = useIPSets()
   const canEdit = useCanEdit()
+  const feeds = useQuery({ queryKey: ['feeds'], queryFn: () => api.get<Record<string, Feed>>('/feeds') })
   const [form, setForm] = useState({ name: '', type: 'hash:ip', family: 'inet' })
   const create = useFwMutation(() => api.post('/ipsets', form), 'IP set created — reload to activate it')
 
@@ -169,7 +206,7 @@ export default function IPSetsPage() {
       </Card>
       {names.length === 0 && <p className="text-sm text-muted-foreground">No IP sets defined.</p>}
       <div className="grid gap-4 lg:grid-cols-2">
-        {names.map((n) => <IPSetCard key={n} name={n} runtime={rt.get(n)} permanent={pm.get(n)} />)}
+        {names.map((n) => <IPSetCard key={n} name={n} runtime={rt.get(n)} permanent={pm.get(n)} feed={feeds.data?.[n]} />)}
       </div>
     </div>
   )

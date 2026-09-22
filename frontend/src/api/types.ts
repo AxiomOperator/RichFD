@@ -309,3 +309,113 @@ export interface Me {
   hostname: string
   tls: boolean
 }
+
+export interface SocketRow {
+  proto: string
+  state: string
+  local_addr: string
+  local_port: string
+  peer_addr: string
+  peer_port: string
+  process: string
+  pid: number | null
+  listening: boolean
+  peer_class: string
+  direction: 'in' | 'out' | 'listen'
+}
+
+export interface ConntrackRow {
+  proto: string
+  state: string
+  src: string
+  dst: string
+  sport: string
+  dport: string
+  nat: boolean
+  assured: boolean
+  src_class: string
+}
+
+export interface ConnectionsData {
+  sockets: SocketRow[]
+  conntrack: ConntrackRow[]
+  conntrack_error: string
+  processes_visible: boolean
+}
+
+export interface DeniedStats {
+  hours: number
+  bucket_minutes: number
+  total: number
+  unique_sources: number
+  timeline: { t: string; count: number }[]
+  top_sources: { src: string; count: number; ports: string[] }[]
+  top_ports: { port: string; count: number }[]
+  top_zones: { zone: string; count: number }[]
+  top_interfaces: { interface: string; count: number }[]
+  port?: number
+  top_sources_on_port?: { src: string; count: number }[]
+}
+
+export interface Jail {
+  name: string
+  currently_failed: number
+  total_failed: number
+  currently_banned: number
+  total_banned: number
+  banned: string[]
+  files: string
+  bantime: number | null
+  findtime: number | null
+  maxretry: number | null
+  actions: string[]
+  uses_firewalld: boolean
+  managed_settings?: Record<string, string>
+}
+
+export interface Fail2banStatus {
+  installed: boolean
+  running: boolean
+  version?: string
+  jails: Jail[]
+  filters: string[]
+  managed?: string[]
+  error?: string
+  hint?: string
+}
+
+export interface DdnsEntry {
+  id: string
+  hostname: string
+  template: RichRule
+  zone: string
+  scope: 'zone' | 'policy'
+  interval: number
+  applied: Record<string, string>
+  resolved?: string[]
+  last_check: number
+  last_error: string
+  created_by: string
+}
+
+export interface Backup {
+  id: string
+  name: string
+  created: string
+  host: string
+  user: string
+  source: 'manual' | 'auto' | 'upload'
+  has_files: boolean
+  zones?: number
+  policies?: number
+  size: number
+}
+
+export interface Feed {
+  url: string
+  interval_hours: number
+  last_check?: number
+  last_ok?: number
+  last_error?: string
+  count?: number
+}

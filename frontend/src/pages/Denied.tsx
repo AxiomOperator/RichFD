@@ -4,12 +4,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { api, apiUrl } from '@/api/client'
 import { useFwMutation, useStatus } from '@/api/hooks'
-import type { DeniedEntry, RichRule } from '@/api/types'
+import type { DeniedEntry, DeniedStats, RichRule } from '@/api/types'
+import { BlockIpButton } from '@/components/BlockIp'
+import { BarList, ColumnChart, StatTile } from '@/components/charts'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCanEdit } from '@/lib/session'
@@ -32,7 +36,7 @@ function allowRule(e: DeniedEntry): RichRule {
   }
 }
 
-export default function DeniedPage() {
+function LiveFeed() {
   const status = useStatus()
   const canEdit = useCanEdit()
   const navigate = useNavigate()
@@ -144,7 +148,7 @@ export default function DeniedPage() {
                 <TableHead>Source</TableHead>
                 <TableHead>Destination</TableHead>
                 <TableHead>Proto</TableHead>
-                <TableHead className="w-20" />
+                <TableHead className="w-28" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -169,6 +173,7 @@ export default function DeniedPage() {
                       </TooltipTrigger>
                       <TooltipContent>Explain in the traffic tester</TooltipContent>
                     </Tooltip>
+                    {e.kind !== 'logged' && <BlockIpButton ip={e.src} zone={zoneFor(e)} />}
                     {canEdit && e.kind !== 'logged' && zoneFor(e) && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -195,5 +200,135 @@ export default function DeniedPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+const RANGES = [
+  { hours: 1, label: 'Last hour' },
+  { hours: 6, label: '6 hours' },
+  { hours: 24, label: '24 hours' },
+  { hours: 168, label: '7 days' },
+]
+
+function Dashboard() {
+  const navigate = useNavigate()
+  const status = useStatus()
+  const [hours, setHours] = useState(24)
+  const [port, setPort] = useState('22')
+  const portNum = /^\d+$/.test(port) ? Number(port) : null
+  const stats = useQuery({
+    queryKey: ['denied-stats', hours, portNum],
+    queryFn: () => api.get<DeniedStats>(`/denied/stats?hours=${hours}${portNum !== null ? `&port=${portNum}` : ''}`),
+    refetchInterval: 30_000,
+    placeholderData: (prev) => prev,
+  })
+  const d = stats.data
+  const explain = (src: string, dport?: string) => (
+    <Button variant="ghost" size="icon-sm" aria-label={`Explain ${src}`}
+      onClick={() => navigate(`/tester?src=${encodeURIComponent(src)}${dport ? `&dport=${dport}` : ''}`)}>
+      <SearchIcon />
+    </Button>
+  )
+  return (
+    <div className="grid gap-4">
+      {/* Filters: one row, above everything they scope. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-md border p-0.5">
+          {RANGES.map((r) => (
+            <Button key={r.hours} size="sm" variant={hours === r.hours ? 'secondary' : 'ghost'} onClick={() => setHours(r.hours)}>
+              {r.label}
+            </Button>
+          ))}
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          Focus port
+          <Input className="h-8 w-20" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" placeholder="22" />
+        </label>
+        {status.data?.log_denied === 'off' && <span className="text-sm text-amber-700 dark:text-amber-400">log-denied is off: only rich-rule logs are counted</span>}
+      </div>
+      {!d ? (
+        stats.isError ? <p className="text-destructive">{stats.error.message}</p> : <Skeleton className="h-80" />
+      ) : (
+        <div className={`grid gap-4 ${stats.isFetching ? 'opacity-70' : ''}`}>
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <StatTile label="Blocked packets" value={d.total.toLocaleString()} hint={RANGES.find((r) => r.hours === hours)?.label} />
+            <StatTile label="Distinct sources" value={d.unique_sources.toLocaleString()} />
+            <StatTile label="Most targeted port" value={d.top_ports[0]?.port ?? '—'} hint={d.top_ports[0] ? `${d.top_ports[0].count} packets` : undefined} />
+            <StatTile label="Top source" value={<span className="font-mono text-lg">{d.top_sources[0]?.src ?? '—'}</span>}
+              hint={d.top_sources[0] ? `${d.top_sources[0].count} packets` : undefined} />
+          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Blocked packets over time</CardTitle>
+              <CardDescription>Per {d.bucket_minutes} minutes.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ColumnChart data={d.timeline} label="Blocked packets over time" />
+            </CardContent>
+          </Card>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Top 10 sources</CardTitle>
+                <CardDescription>Addresses with the most blocked packets, and the ports they tried.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <BarList
+                  empty="No blocked traffic in this period"
+                  items={d.top_sources.map((s) => ({
+                    key: s.src, label: s.src, value: s.count, detail: s.ports.join(', '),
+                    actions: <>{explain(s.src)}<BlockIpButton ip={s.src} /></>,
+                  }))}
+                />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>{portNum !== null ? `Top 10 addresses hitting port ${portNum}` : 'Pick a port to focus on'}</CardTitle>
+                <CardDescription>{portNum === 22 ? 'SSH brute-force candidates — consider Fail2ban or the rate-limit template.' : 'Sources blocked on the focus port.'}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <BarList
+                  empty={portNum !== null ? `Nothing blocked on port ${portNum}` : 'Enter a port above'}
+                  items={(d.top_sources_on_port ?? []).map((s) => ({
+                    key: s.src, label: s.src, value: s.count,
+                    actions: <>{explain(s.src, String(portNum))}<BlockIpButton ip={s.src} /></>,
+                  }))}
+                />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>Top targeted ports</CardTitle></CardHeader>
+              <CardContent>
+                <BarList empty="No data" items={d.top_ports.map((p) => ({ key: p.port, label: p.port, value: p.count }))} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>By zone and interface</CardTitle></CardHeader>
+              <CardContent className="grid gap-4">
+                <BarList empty="No data" items={d.top_zones.map((z) => ({ key: z.zone, label: z.zone, value: z.count }))} />
+                <BarList empty="No data" items={d.top_interfaces.map((z) => ({ key: z.interface, label: z.interface, value: z.count }))} />
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function DeniedPage() {
+  return (
+    <Tabs defaultValue="dashboard" className="grid gap-4">
+      <div className="flex items-center gap-3">
+        <h1 className="text-2xl font-semibold">Denied traffic</h1>
+        <TabsList>
+          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger value="live">Live feed</TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="dashboard"><Dashboard /></TabsContent>
+      <TabsContent value="live"><LiveFeed /></TabsContent>
+    </Tabs>
   )
 }

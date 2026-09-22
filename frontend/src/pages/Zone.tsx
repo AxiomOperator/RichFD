@@ -1,4 +1,6 @@
 import { DownloadIcon, RotateCcwIcon, StarIcon, Trash2Icon } from 'lucide-react'
+import { useState } from 'react'
+import { ExportCodeDialog, type ExportScope } from '@/components/ExportCode'
 import { useLocation, useNavigate, useParams } from 'react-router'
 import { api, apiUrl } from '@/api/client'
 import { useFwMutation, useStatus, useZone } from '@/api/hooks'
@@ -35,7 +37,15 @@ const TARGETS = [
 ]
 
 export function ExportMenu({ kind, name }: { kind: 'zone' | 'policy' | 'service' | 'ipset'; name: string }) {
+  const [code, setCode] = useState<ExportScope | null>(null)
+  const scopeFor = (): ExportScope => ({
+    zones: kind === 'zone' ? [name] : [],
+    policies: kind === 'policy' ? [name] : [],
+    services: kind === 'service',
+    ipsets: kind === 'ipset',
+  })
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm">
@@ -53,8 +63,13 @@ export function ExportMenu({ kind, name }: { kind: 'zone' | 'policy' | 'service'
             richrule JSON
           </a>
         </DropdownMenuItem>
+        {(kind === 'zone' || kind === 'policy') && (
+          <DropdownMenuItem onSelect={() => setCode(scopeFor())}>Ansible playbook / firewall-cmd script</DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
+    {code && <ExportCodeDialog title={`${kind} ${name}`} scope={code} onClose={() => setCode(null)} />}
+    </>
   )
 }
 

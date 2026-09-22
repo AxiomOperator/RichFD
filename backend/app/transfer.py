@@ -9,6 +9,7 @@
 
 import io
 import ipaddress
+import re
 import socket
 import tarfile
 import tempfile
@@ -195,16 +196,25 @@ def apply_bundle(bundle: dict, only: list[str] | None = None) -> list[dict]:
 
 
 def parse_address_list(text: str) -> tuple[list[str], list[str]]:
-    """Addresses/networks from a text list (one per line, '#' comments). Returns (valid, invalid)."""
+    """Addresses/networks from a text or CSV list. Returns (valid, invalid).
+
+    Accepts one entry per line, or CSV/TSV with addresses in any column; '#' and ';'
+    start comments. Words (CSV headers, hostnames, labels) are ignored; only tokens that look
+    like addresses but don't parse are reported as invalid.
+    """
     valid, invalid = [], []
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].split(";", 1)[0].strip()
         if not line:
             continue
-        for token in line.replace(",", " ").split():
+        for token in re.split(r"[\s,\t|]+", line):
+            token = token.strip().strip('"\'')
+            if not token:
+                continue
             try:
                 net = ipaddress.ip_network(token, strict=False)
                 valid.append(str(net.network_address) if net.num_addresses == 1 else str(net))
             except ValueError:
-                invalid.append(token)
+                if re.fullmatch(r"[0-9a-fA-F.:/]+", token) and re.search(r"\d", token) and re.search(r"[.:]", token):
+                    invalid.append(token)
     return list(dict.fromkeys(valid)), invalid

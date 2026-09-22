@@ -156,7 +156,7 @@ def current_session(request: Request, response: Response) -> Session:
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 # POST endpoints that only read (analysis/validation); viewers may call them.
 READ_ONLY_POSTS = ("/rich-rules/parse", "/rich-rules/render", "/tester", "/risk",
-                   "/templates/preview", "/import/preview")
+                   "/templates/preview", "/import/preview", "/automation/export", "/bulk/rules")
 
 
 def require_user(request: Request, session: Session = Depends(current_session)) -> Session:

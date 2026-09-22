@@ -1,8 +1,12 @@
-import { ArrowRightLeftIcon, CopyIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react'
+import { ArrowRightLeftIcon, CopyIcon, FileCode2Icon, ListPlusIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react'
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { toast } from 'sonner'
 import { useIcmpTypes, usePolicies, useServices, useZones } from '@/api/hooks'
 import type { ForwardPortSpec, OpKind, PortSpec, RichRule, Scope, Target, ZoneView, PolicyView } from '@/api/types'
 import { ConfirmButton } from '@/components/ConfirmButton'
+import { ExportCodeDialog, type ExportScope } from '@/components/ExportCode'
+import { api } from '@/api/client'
+import { Textarea } from '@/components/ui/textarea'
 import { PresenceBadge } from '@/components/PresenceBadge'
 import { RichRuleBuilder, type RuleSubmit } from '@/components/RichRuleBuilder'
 import { Badge } from '@/components/ui/badge'
@@ -189,11 +193,13 @@ function BulkBar<T>({
   bulk,
   onTransfer,
   onClear,
+  extra,
 }: {
   selected: Merged<T>[]
   bulk: ReturnType<typeof useBulk<T>>
   onTransfer: () => void
   onClear: () => void
+  extra?: ReactNode
 }) {
   const canEdit = useCanEdit()
   if (selected.length === 0 || !canEdit) return null
@@ -231,6 +237,7 @@ function BulkBar<T>({
           Remove from runtime
         </ConfirmButton>
       )}
+      {extra}
       <Button size="sm" variant="ghost" className="ml-auto" onClick={onClear}>
         Clear
       </Button>
@@ -266,6 +273,8 @@ export function RichRulesCard({
   )
   const [filter, setFilter] = useState('')
   const [transfer, setTransfer] = useState(false)
+  const [exportScope, setExportScope] = useState<ExportScope | null>(null)
+  const [bulkImport, setBulkImport] = useState(false)
   const selection = useSelection()
   const bulk = useBulk<RuleEntry>(ops, 'rich-rule', (r) => ({ rule: r.rule }))
   const canEdit = useCanEdit()
@@ -297,6 +306,11 @@ export function RichRulesCard({
         <CardAction className="flex gap-2">
           <Input placeholder="Filter…" value={filter} onChange={(e) => setFilter(e.target.value)} className="h-8 w-40" />
           {canEdit && (
+            <Button size="sm" variant="outline" onClick={() => setBulkImport(true)}>
+              <ListPlusIcon /> Import IP list
+            </Button>
+          )}
+          {canEdit && (
             <Button size="sm" onClick={() => setDialog({ mode: 'add' })}>
               <PlusIcon /> Add rule
             </Button>
@@ -304,7 +318,18 @@ export function RichRulesCard({
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3">
-        <BulkBar selected={selected} bulk={bulk} onTransfer={() => setTransfer(true)} onClear={selection.clear} />
+        <BulkBar
+          selected={selected}
+          bulk={bulk}
+          onTransfer={() => setTransfer(true)}
+          onClear={selection.clear}
+          extra={
+            <Button size="sm" variant="outline"
+              onClick={() => setExportScope({ rules: selected.map((r) => r.item.rule), scope: ops.scope, name: ops.name })}>
+              <FileCode2Icon /> Ansible / Bash
+            </Button>
+          }
+        />
         {rules.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">No rich rules in {ops.name}.</p>
         ) : (
@@ -424,8 +449,13 @@ export function RichRulesCard({
           submitLabel={dialog.mode === 'edit' ? 'Save' : 'Add rule'}
           allowTimeout={dialog.mode !== 'edit' && ops.scope === 'zone'}
           onSubmit={submit}
+          ddnsTarget={dialog.mode === 'edit' ? undefined : { zone: ops.name, scope: ops.scope }}
         />
       )}
+      {exportScope && (
+        <ExportCodeDialog title={`${exportScope.rules?.length} rich rule(s) from ${ops.name}`} scope={exportScope} onClose={() => setExportScope(null)} />
+      )}
+      {bulkImport && <BulkIpRulesDialog ops={ops} onClose={() => setBulkImport(false)} />}
       <TransferDialog
         open={transfer}
         onOpenChange={setTransfer}
@@ -434,6 +464,105 @@ export function RichRulesCard({
         onSubmit={(dest, move) => bulk.transfer(selected, dest, move).then(selection.clear)}
       />
     </Card>
+  )
+}
+
+/** Upload/paste a .txt or .csv of addresses and generate one rich rule per address. */
+function BulkIpRulesDialog({ ops, onClose }: { ops: RuleOps; onClose: () => void }) {
+  const services = useServices()
+  const [text, setText] = useState('')
+  const [action, setAction] = useState<'drop' | 'reject' | 'accept'>('drop')
+  const [match, setMatch] = useState<'all' | 'service' | 'port'>('all')
+  const [service, setService] = useState('ssh')
+  const [port, setPort] = useState('')
+  const [protocol, setProtocol] = useState('tcp')
+  const [preview, setPreview] = useState<{ rules: string[]; invalid: string[] } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const body = (p: boolean) => ({
+    text, zone: ops.name, scope: ops.scope, action, target: ops.target, preview: p,
+    service: match === 'service' ? service : '', port: match === 'port' ? port : '', protocol,
+    priority: action === 'accept' ? 0 : -100,
+  })
+  async function doPreview() {
+    setBusy(true)
+    try {
+      setPreview(await api.post<{ rules: string[]; invalid: string[] }>('/bulk/rules', body(true)))
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  async function apply() {
+    if (!preview) return
+    // Same lock-out check and apply path as any other change.
+    try {
+      await ops.run(preview.rules.map((rule) => ops.op('add', 'rich-rule', { rule })))
+      onClose()
+    } catch {
+      /* toast shown */
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92svh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Import IP list into {ops.name}</DialogTitle>
+          <DialogDescription>
+            Paste addresses or upload a .txt / .csv file — addresses are found in any column, headers and comments are
+            ignored. One rich rule is created per address. For long lists, an IP set (IP Sets → Bulk add) is faster.
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea rows={7} className="font-mono text-xs" value={text} placeholder={'203.0.113.7\n198.51.100.0/24\nip,comment\n192.0.2.9,scanner'}
+          onChange={(e) => { setText(e.target.value); setPreview(null) }} />
+        <input type="file" accept=".txt,.csv,.tsv,.list,text/plain,text/csv" className="text-sm"
+          onChange={(e) => e.target.files?.[0]?.text().then((t) => { setText(t); setPreview(null) })} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={action} onValueChange={(v) => { setAction(v as typeof action); setPreview(null) }}>
+            <SelectTrigger size="sm" className="w-32" aria-label="Action"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="drop">Drop</SelectItem>
+              <SelectItem value="reject">Reject</SelectItem>
+              <SelectItem value="accept">Accept</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={match} onValueChange={(v) => { setMatch(v as typeof match); setPreview(null) }}>
+            <SelectTrigger size="sm" className="w-40" aria-label="Match"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">all traffic</SelectItem>
+              <SelectItem value="service">a service</SelectItem>
+              <SelectItem value="port">a port</SelectItem>
+            </SelectContent>
+          </Select>
+          {match === 'service' && (
+            <Select value={service} onValueChange={(v) => { setService(v); setPreview(null) }}>
+              <SelectTrigger size="sm" className="w-44" aria-label="Service"><SelectValue /></SelectTrigger>
+              <SelectContent className="max-h-72">{services.data?.map((x) => <SelectItem key={x.name} value={x.name}>{x.name}</SelectItem>)}</SelectContent>
+            </Select>
+          )}
+          {match === 'port' && (
+            <>
+              <Input className="h-8 w-28" placeholder="port" value={port} onChange={(e) => { setPort(e.target.value); setPreview(null) }} />
+              <ProtocolSelect value={protocol} onChange={(v) => { setProtocol(v); setPreview(null) }} />
+            </>
+          )}
+        </div>
+        {preview && (
+          <div className="grid gap-1 rounded-md border bg-muted/40 p-3 text-xs">
+            <div className="font-sans text-sm font-medium">{preview.rules.length} rule(s){preview.invalid.length ? `, ${preview.invalid.length} invalid skipped (${preview.invalid.slice(0, 3).join(', ')})` : ''}</div>
+            <pre className="max-h-48 overflow-auto">{preview.rules.slice(0, 200).join('\n')}{preview.rules.length > 200 ? `\n… ${preview.rules.length - 200} more` : ''}</pre>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          {preview ? (
+            <Button onClick={apply} disabled={!preview.rules.length || ops.pending}>Add {preview.rules.length} rules</Button>
+          ) : (
+            <Button onClick={doPreview} disabled={!text.trim() || busy || (match === 'port' && !port)}>Preview</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

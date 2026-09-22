@@ -1,5 +1,8 @@
 import { CheckCircle2Icon, Loader2Icon, XCircleIcon } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useId, useState, type ReactNode } from 'react'
+import { toast } from 'sonner'
+import { api } from '@/api/client'
 import { parseRule, renderRule, useIcmpTypes, useIPSets, useServices } from '@/api/hooks'
 import type { RichRule } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -65,7 +68,13 @@ interface Props {
   submitLabel: string
   allowTimeout?: boolean
   onSubmit: (v: RuleSubmit) => Promise<unknown>
+  /** Where DDNS rules (hostname sources) are created; omit to disallow hostnames. */
+  ddnsTarget?: { zone: string; scope: 'zone' | 'policy' }
 }
+
+const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+\.?$/
+/** A source address that is a DNS name rather than an IP/network. */
+export const isHostname = (v: string) => !/^[0-9a-fA-F:.\/]+$/.test(v.trim()) && HOSTNAME_RE.test(v.trim())
 
 function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   const id = useId()
@@ -151,7 +160,8 @@ function useDebounced<T>(value: T, ms: number) {
   return v
 }
 
-export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabel, allowTimeout, onSubmit }: Props) {
+export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabel, allowTimeout, onSubmit, ddnsTarget }: Props) {
+  const qc = useQueryClient()
   const services = useServices()
   const icmpTypes = useIcmpTypes()
   const ipsets = useIPSets()
@@ -166,6 +176,8 @@ export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabe
   const [submitting, setSubmitting] = useState(false)
 
   const set = <K extends keyof RuleForm>(k: K, v: RuleForm[K]) => setForm((f) => ({ ...f, [k]: v }))
+  const ddnsHost = mode === 'builder' && ddnsTarget && form.srcType === 'addr' && isHostname(form.srcValue) ? form.srcValue.trim() : ''
+  const [interval, setIntervalMin] = useState('5')
 
   // Live validation against firewalld's parser.
   const debouncedForm = useDebounced(form, 250)
@@ -179,7 +191,10 @@ export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabe
       return
     }
     setCheck((c) => ({ ...c, state: 'checking' }))
-    const p = mode === 'builder' ? renderRule(formToRule(input as RuleForm)) : parseRule(input as string)
+    // DDNS: validate the rest of the rule with a documentation address in place of the hostname.
+    const withExample = (f: RuleForm): RuleForm =>
+      ddnsHost ? { ...f, family: f.family || 'ipv4', srcValue: f.family === 'ipv6' ? '2001:db8::1' : '192.0.2.1' } : f
+    const p = mode === 'builder' ? renderRule(formToRule(withExample(input as RuleForm))) : parseRule(input as string)
     p.then(
       (r) => !cancelled && setCheck(r.valid ? { state: 'valid', rule: r.rule } : { state: 'invalid', error: r.error }),
       (e: Error) => !cancelled && setCheck({ state: 'invalid', error: e.message }),
@@ -187,7 +202,7 @@ export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabe
     return () => {
       cancelled = true
     }
-  }, [open, mode, debouncedForm, debouncedRaw])
+  }, [open, mode, debouncedForm, debouncedRaw, ddnsHost])
 
   async function switchMode(next: string) {
     if (next === 'raw' && check.state === 'valid' && check.rule) setRaw(check.rule)
@@ -202,10 +217,25 @@ export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabe
     if (check.state !== 'valid' || !check.rule) return
     setSubmitting(true)
     try {
+      if (ddnsHost && ddnsTarget) {
+        const entry = await api.post<{ resolved?: string[]; last_error: string }>('/ddns', {
+          hostname: ddnsHost,
+          rule: formToRule(form),
+          zone: ddnsTarget.zone,
+          scope: ddnsTarget.scope,
+          interval: Math.max(1, Number(interval) || 5) * 60,
+        })
+        if (entry.last_error) toast.warning(`DDNS rule saved, but ${entry.last_error}`)
+        else toast.success(`DDNS rule created: ${ddnsHost} → ${(entry.resolved ?? []).join(', ')}`)
+        await qc.invalidateQueries()
+        onOpenChange(false)
+        return
+      }
       await onSubmit({ rule: check.rule, timeout: temporary ? Number(timeout) || 0 : undefined })
       onOpenChange(false)
-    } catch {
-      /* error already shown as a toast; keep the dialog open */
+    } catch (e) {
+      if (ddnsHost) toast.error((e as Error).message)
+      /* otherwise the error is already shown as a toast; keep the dialog open */
     } finally {
       setSubmitting(false)
     }
@@ -285,7 +315,7 @@ export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabe
                     onChange={(e) => set('srcValue', e.target.value)}
                     list={form.srcType === 'ipset' ? 'rr-ipsets' : undefined}
                     placeholder={
-                      form.srcType === 'mac' ? '00:11:22:33:44:55' : form.srcType === 'ipset' ? 'ipset name' : '192.168.1.0/24'
+                      form.srcType === 'mac' ? '00:11:22:33:44:55' : form.srcType === 'ipset' ? 'ipset name' : ddnsTarget ? '192.168.1.0/24 or myhome.dyndns.org' : '192.168.1.0/24'
                     }
                   />
                 </div>
@@ -525,6 +555,14 @@ export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabe
           ) : (
             <span>{check.rule ?? '…'}</span>
           )}
+          {ddnsHost && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 font-sans text-xs text-sky-700 dark:text-sky-400">
+              Dynamic DNS rule: <b>{ddnsHost}</b> is resolved every
+              <input className="h-6 w-12 rounded border bg-background px-1 text-foreground" value={interval}
+                onChange={(e) => setIntervalMin(e.target.value)} inputMode="numeric" aria-label="Minutes" />
+              minutes and one rule is kept per current address (preview shows an example address). Applies to runtime + permanent.
+            </div>
+          )}
         </div>
 
         <DialogFooter className="items-center gap-3 sm:justify-between">
@@ -553,7 +591,7 @@ export function RichRuleBuilder({ open, onOpenChange, initial, title, submitLabe
             </Button>
             <Button onClick={submit} disabled={check.state !== 'valid' || submitting}>
               {submitting && <Loader2Icon className="animate-spin" />}
-              {submitLabel}
+              {ddnsHost ? 'Create DDNS rule' : submitLabel}
             </Button>
           </div>
         </DialogFooter>

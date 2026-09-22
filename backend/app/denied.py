@@ -68,13 +68,10 @@ def _from_journal(rec: dict) -> dict | None:
     return entry
 
 
-def recent(limit: int = 500, scan: int = 20000) -> list[dict]:
-    """Most recent packet-log entries, newest first."""
+def _read(args: list[str]) -> list[dict]:
     try:
-        out = subprocess.run(
-            ["journalctl", "-k", "-o", "json", "--no-pager", "-n", str(scan)],
-            capture_output=True, text=True, timeout=30,
-        ).stdout
+        out = subprocess.run(["journalctl", "-k", "-o", "json", "--no-pager", *args],
+                             capture_output=True, text=True, timeout=60).stdout
     except (OSError, subprocess.TimeoutExpired):
         return []
     entries = []
@@ -85,7 +82,63 @@ def recent(limit: int = 500, scan: int = 20000) -> list[dict]:
             continue
         if e:
             entries.append(e)
-    return entries[-limit:][::-1]
+    return entries
+
+
+def recent(limit: int = 500, scan: int = 20000) -> list[dict]:
+    """Most recent packet-log entries, newest first."""
+    return _read(["-n", str(scan)])[-limit:][::-1]
+
+
+def stats(hours: int = 24, port: int | None = None, top: int = 10, entries: list[dict] | None = None) -> dict:
+    """Aggregates of denied packets for the dashboard: top sources/ports/zones and a timeline."""
+    from collections import Counter
+    from datetime import datetime, timedelta
+
+    if entries is None:
+        entries = _read(["--since", f"-{hours}h"])
+    denied = [e for e in entries if e["kind"] in ("denied", "invalid")]
+    now = datetime.now().astimezone()
+    start = now - timedelta(hours=hours)
+    # bucket size: 5 min for <= 6h, 15 min for <= 24h, else hourly
+    minutes = 5 if hours <= 6 else 15 if hours <= 24 else 60
+    nb = max(1, int(hours * 60 / minutes))
+    buckets = [0] * nb
+    for e in denied:
+        try:
+            t = datetime.fromisoformat(e["ts"])
+        except (KeyError, ValueError):
+            continue
+        idx = int((t - start).total_seconds() // (minutes * 60))
+        if 0 <= idx < nb:
+            buckets[idx] += 1
+    timeline = [{"t": (start + timedelta(minutes=minutes * i)).isoformat(timespec="minutes"), "count": c}
+                for i, c in enumerate(buckets)]
+
+    def port_label(e):
+        return f"{e['dpt']}/{e['proto']}" if e.get("dpt") else e.get("proto") or "?"
+
+    src = Counter(e["src"] for e in denied)
+    ports = Counter(port_label(e) for e in denied)
+    zones = Counter(e.get("zone") or e.get("policy") or "other" for e in denied)
+    ifaces = Counter(e.get("in") or "?" for e in denied)
+    result = {
+        "hours": hours,
+        "bucket_minutes": minutes,
+        "total": len(denied),
+        "unique_sources": len(src),
+        "timeline": timeline,
+        "top_sources": [{"src": k, "count": v, "ports": sorted({port_label(e) for e in denied if e["src"] == k})[:5]}
+                        for k, v in src.most_common(top)],
+        "top_ports": [{"port": k, "count": v} for k, v in ports.most_common(top)],
+        "top_zones": [{"zone": k, "count": v} for k, v in zones.most_common(top)],
+        "top_interfaces": [{"interface": k, "count": v} for k, v in ifaces.most_common(top)],
+    }
+    if port is not None:
+        on_port = Counter(e["src"] for e in denied if e.get("dpt") == port)
+        result["port"] = port
+        result["top_sources_on_port"] = [{"src": k, "count": v} for k, v in on_port.most_common(top)]
+    return result
 
 
 async def stream():

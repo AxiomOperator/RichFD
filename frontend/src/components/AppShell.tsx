@@ -1,6 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query'
 import {
+  ArchiveIcon,
   ArrowLeftRightIcon,
+  ActivityIcon,
+  GlobeIcon,
+  ShieldBanIcon,
   ChevronDownIcon,
   CircleUserIcon,
   FileClockIcon,
@@ -82,18 +86,22 @@ function AppSidebar({ me }: { me: Me }) {
         { to: '/services', label: 'Services', icon: ListIcon },
         { to: '/ipsets', label: 'IP Sets', icon: NetworkIcon },
         { to: '/templates', label: 'Templates', icon: WandSparklesIcon },
+        { to: '/ddns', label: 'Dynamic DNS', icon: GlobeIcon },
       ],
     },
     {
-      label: 'Diagnose',
+      label: 'Monitor & protect',
       items: [
+        { to: '/denied', label: 'Denied traffic', icon: ScrollTextIcon },
+        { to: '/connections', label: 'Connections', icon: ActivityIcon },
         { to: '/tester', label: 'Traffic tester', icon: RadarIcon },
-        { to: '/denied', label: 'Packet log', icon: ScrollTextIcon },
+        { to: '/fail2ban', label: 'Fail2ban', icon: ShieldBanIcon },
       ],
     },
     {
       label: 'Manage',
       items: [
+        { to: '/backups', label: 'Backups', icon: ArchiveIcon },
         { to: '/history', label: 'Config history', icon: FileClockIcon },
         { to: '/import-export', label: 'Import / export', icon: FolderSyncIcon },
         { to: '/direct', label: 'Direct rules', icon: FileCode2Icon },

@@ -22,16 +22,28 @@ itself validates as you type. One install manages its own host, and can also act
   runtime ↔ permanent, or remove them from runtime only.
 - **Custom services:** ports, protocols, source ports, conntrack helpers, includes and destination restrictions.
   Built-in services can be overridden and reset.
-- **IP sets:** create them, add entries, and bulk-import address lists by pasting or from a file.
-- **Rule templates:** SSH only from a subnet, rate-limited SSH, block a country (IP set downloaded from
-  ipdeny.com or pasted in), port-forward to a container, block an address, allow a service from a source, and
-  a web server preset. Every template shows a preview before it applies.
+- **IP sets:** create them, add entries, and bulk-import address lists by pasting or from a .txt / .csv file
+  (addresses are picked from any column). Any set can be kept updated from a URL (a "feed").
+- **Bulk IP rules:** paste or upload a .txt / .csv of addresses to generate one rich rule per address (drop,
+  reject or accept, for all traffic, a service or a port), with a preview first.
+- **Dynamic DNS rules:** type a hostname (e.g. `myhome.dyndns.org`) as a rule's source address. RichFD resolves it
+  on a schedule and keeps one concrete rule per current address, replacing rules when the address changes.
+- **Rule templates:** SSH only from a subnet, rate-limit SSH (3 per minute by default), allow web ports only
+  from Cloudflare, block Tor exit nodes, block a country, port-forward to a container, block an address, allow a
+  service from a source, and a web server preset. Every template shows a preview before it applies. The
+  Cloudflare, Tor and country lists are downloaded into IP sets and refreshed automatically.
+- **Ansible / Bash export:** turn the configuration, one zone or policy, or just the selected rich rules into an
+  idempotent Ansible playbook (`ansible.posix.firewalld`) or a `firewall-cmd` script, then roll it out to many
+  servers.
 - **Runtime vs permanent:** each change goes to *Runtime + Permanent*, *Runtime only* or *Permanent only*. Items
   that differ between the two are flagged, with a one-click sync.
 
 **Safety**
 - **Config history:** a git snapshot of `/etc/firewalld` is taken around every change, labeled with who made it.
   The History page shows diffs, a restore preview and one-click restore (which reloads firewalld).
+- **Backups:** named backups (the raw `/etc/firewalld` tree plus a JSON export) that you can create, download,
+  upload and restore. Inspect shows which files a restore would change. Automatic backups are taken daily and the
+  newest 14 are kept (configurable).
 - **Lock-out warnings:** before a change is applied, current SSH sessions and your browser connection are
   simulated against the firewall as it is now and as it would be after the change. If any of them would be cut
   off, safe apply becomes mandatory. Risky changes are also flagged, such as a DROP target on an active zone or
@@ -46,6 +58,15 @@ itself validates as you type. One install manages its own host, and can also act
 - **Live packet log:** log-denied entries and rich-rule `log` entries are streamed from the kernel journal, with
   filters and top sources. Each entry has buttons to explain it in the tester or to create an allow rule, which
   opens the builder pre-filled.
+- **Denied traffic dashboard:** blocked packets over time, top 10 sources, the top addresses hitting a chosen
+  port (22 by default), and the most targeted ports, zones and interfaces, with 1h / 6h / 24h / 7d ranges.
+  Every source has Explain and Block buttons.
+- **Connection tracker:** live sockets from `ss` and tracked flows from `conntrack` (including NATed and forwarded
+  traffic), plus listening services. "Block this IP" adds a high-priority drop rule and can close the existing
+  connections.
+- **Fail2ban:** jail status, failure and ban counts, banned addresses, and manual ban/unban. Jail settings
+  (retries, find time, ban time, port, action, ignore list) are written to `jail.d/richfd-<jail>.local`, and new
+  jails can be created from the installed filters.
 - **Direct rules:** a read-only view of deprecated direct rules, chains and passthroughs.
 
 **Operations**
@@ -141,6 +162,11 @@ backend/app/
   transfer.py    import/export (JSON bundle, firewalld XML, tar.gz, address lists)
   templates.py   rule templates
   notify.py      webhook / syslog / email
+  automation.py  Ansible playbook / firewall-cmd script export
+  connections.py ss / conntrack parsing, closing connections
+  fail2ban.py    fail2ban-client + jail.d overrides
+  ddns.py        hostname-based rules;  backups.py  backup manager
+  scheduler.py   background jobs: DDNS, IP list feeds, automatic backups
   hosts.py       multi-host console proxy;  tokens.py  agent API tokens
   safe_apply.py  auto-reverting runtime changes;  auth.py  PAM, roles, sessions, CSRF, tokens
   routers/       REST endpoints (/api/...)
