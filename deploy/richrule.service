@@ -1,0 +1,36 @@
+[Unit]
+Description=richrule - firewalld web manager
+After=network.target firewalld.service
+Wants=firewalld.service
+
+[Service]
+Type=simple
+# Root is required to change firewalld config over D-Bus and to verify passwords via PAM.
+User=root
+WorkingDirectory=/opt/richrule/backend
+Environment=RICHRULE_HOST=127.0.0.1
+Environment=RICHRULE_PORT=8443
+Environment=RICHRULE_ALLOWED_GROUP=wheel
+# /etc/pam.d/richrule (installed by install.sh): password-only auth.
+Environment=RICHRULE_PAM_SERVICE=richrule
+# Set to 1 when served over HTTPS (e.g. behind a TLS reverse proxy).
+Environment=RICHRULE_SECURE_COOKIES=0
+Environment=RICHRULE_STATIC_DIR=/opt/richrule/frontend/dist
+ExecStart=/opt/richrule/backend/.venv/bin/python -m app.main
+Restart=on-failure
+
+StateDirectory=richrule
+LogsDirectory=richrule
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/firewalld
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

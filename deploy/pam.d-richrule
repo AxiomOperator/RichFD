@@ -1,0 +1,6 @@
+#%PAM-1.0
+# richrule web login: password only. Uses password-auth rather than system-auth so that
+# interactive methods (fingerprint, smartcard) don't make web logins hang waiting for a device.
+auth       include      password-auth
+account    required     pam_nologin.so
+account    include      password-auth
